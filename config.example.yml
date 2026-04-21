@@ -32,9 +32,18 @@ purple_source:
     # source = column name in purple file
     # target = target column name to write in CRM output
     # overwrite = true -> purple value has priority, false -> fill only if target empty
-    - source: "Comments"
+    # transform=comment_history:
+    # - strips date + agent name from entries like "2026-.. | Agent | comment"
+    # - skips lines containing email info
+    # - writes comments in reverse order (latest at top)
+    - source: "Last 10 Comments"
       target: "Comments"
       overwrite: true
+      transform: "comment_history"
+      transform_options:
+        reverse_order: true
+        ignore_keywords: ["email"]
+        output_separator: " ; "
     - source: "Call Att"
       target: "Call Att"
       overwrite: true

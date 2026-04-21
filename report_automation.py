@@ -23,6 +23,8 @@ from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from rapidfuzz import fuzz, process
 
+EMAIL_PATTERN = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -80,6 +82,72 @@ def normalize_join_key(value: Any) -> str:
     if pd.isna(value):
         return ""
     return str(value).strip().casefold()
+
+
+def extract_comment_payload(comment_entry: str) -> str:
+    parts = [part.strip() for part in str(comment_entry).split("|")]
+    if len(parts) >= 3:
+        return "|".join(parts[2:]).strip()
+    if len(parts) == 2:
+        return parts[1].strip()
+    return parts[0].strip() if parts else ""
+
+
+def should_skip_comment(comment_text: str, ignore_keywords: list[str]) -> bool:
+    if not comment_text:
+        return True
+
+    lowered = comment_text.casefold()
+    if EMAIL_PATTERN.search(comment_text):
+        return True
+    return any(keyword.casefold() in lowered for keyword in ignore_keywords)
+
+
+def transform_comment_history(raw_value: Any, options: dict[str, Any] | None = None) -> Any:
+    if pd.isna(raw_value):
+        return pd.NA
+
+    options = options or {}
+    reverse_order = bool(options.get("reverse_order", True))
+    output_separator = str(options.get("output_separator", " ; "))
+    ignore_keywords = options.get("ignore_keywords", ["email"])
+    if not isinstance(ignore_keywords, list):
+        ignore_keywords = ["email"]
+
+    text = str(raw_value)
+    # Source comments can be separated by line breaks and/or semicolons.
+    chunks = re.split(r"(?:\r?\n)+|;", text)
+    parsed_comments: list[str] = []
+    for chunk in chunks:
+        clean_chunk = chunk.strip()
+        if not clean_chunk:
+            continue
+
+        payload = extract_comment_payload(clean_chunk).strip()
+        if should_skip_comment(payload, ignore_keywords):
+            continue
+        parsed_comments.append(payload)
+
+    if reverse_order:
+        parsed_comments = list(reversed(parsed_comments))
+    if not parsed_comments:
+        return pd.NA
+    return output_separator.join(parsed_comments)
+
+
+def apply_mapping_transform(source_values: pd.Series, mapping: dict[str, Any]) -> pd.Series:
+    transform_name = mapping.get("transform")
+    if not transform_name:
+        return source_values
+
+    options = mapping.get("transform_options", {})
+    if transform_name == "comment_history":
+        return source_values.map(lambda value: transform_comment_history(value, options=options))
+
+    raise ValueError(
+        f"Unsupported transform '{transform_name}' in purple_source.columns mapping for "
+        f"target '{mapping.get('target', '')}'"
+    )
 
 
 def load_config(path: str) -> dict[str, Any]:
@@ -146,6 +214,18 @@ def validate_config(config: dict[str, Any]) -> None:
             if "source" not in col_map or "target" not in col_map:
                 raise ValueError(
                     f"Missing config keys in purple_source.columns[{idx}]: source/target"
+                )
+            transform_name = col_map.get("transform")
+            if transform_name and transform_name not in {"comment_history"}:
+                raise ValueError(
+                    f"Unsupported transform in purple_source.columns[{idx}]: {transform_name}"
+                )
+            if (
+                "transform_options" in col_map
+                and not isinstance(col_map["transform_options"], dict)
+            ):
+                raise ValueError(
+                    f"purple_source.columns[{idx}].transform_options must be an object"
                 )
 
 
@@ -346,7 +426,7 @@ def enrich_crm_with_purple_columns(
         source_col = source_renamed_cols[mapping["source"]]
         overwrite = bool(mapping.get("overwrite", True))
 
-        source_values = merged[source_col]
+        source_values = apply_mapping_transform(merged[source_col], mapping)
         old_values = merged[target_col].copy() if target_col in merged.columns else pd.Series(
             [pd.NA] * len(merged), index=merged.index
         )
@@ -364,6 +444,7 @@ def enrich_crm_with_purple_columns(
                 "target_column": target_col,
                 "source_column": mapping["source"],
                 "overwrite": overwrite,
+                "transform": mapping.get("transform", ""),
                 "source_non_null_rows": int(source_values.notna().sum()),
                 "applied_rows": int((~equal_or_both_na).sum()),
             }

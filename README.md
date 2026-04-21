@@ -17,6 +17,11 @@ Bu repoya `report_automation.py` eklendi. Script temel olarak iki dosya ile çal
    - önce exact eşleşme,
    - yoksa fuzzy (yaklaşık) eşleşme kullanır.
 3. Mor sütunları ayrı dosyadan (`--purple`) CRM'e join ederek getirir (opsiyonel).
+   - `transform: comment_history` kullanırsan:
+     - yorum başındaki tarih ve isim kısmını atar,
+     - email içeren satırları çıkarır,
+     - yorum sırasını tersten yazar (en yeni/en alttaki önce),
+     - sadece temiz yorum metnini CRM'e yazar.
 4. Lead bazında kaç kere arandığını hesaplar ve `lead_call_count` kolonu ekler.
 5. Aşağıdaki özet tabloları üretir:
    - `lead_call_counts`
@@ -55,6 +60,13 @@ python report_automation.py \
 `purple_source.stage` seçenekleri:
 - `before_customer_match`: purple join önce yapılır
 - `after_customer_match`: önce customer no bulunur, sonra purple join yapılır (çoğu durumda önerilen)
+
+`purple_source.columns` içinde opsiyonel dönüşüm:
+- `transform: comment_history`
+- `transform_options`:
+  - `reverse_order`: true/false
+  - `ignore_keywords`: örn `["email"]`
+  - `output_separator`: örn `" ; "`
 
 ### Çıktı sayfaları
 
