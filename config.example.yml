@@ -1,0 +1,17 @@
+columns:
+  crm:
+    lead: "Lead Name"
+    customer_no: "Customer No"
+    comment: "CRM Comment"
+    aff: "AFF"
+    status: "Status"
+  powerbi:
+    lead: "Lead Name"
+    customer_no: "Customer Number"
+    comment: "PowerBI Comment"
+
+match:
+  # Exact comment match first, then fuzzy match.
+  fuzzy_threshold: 80
+  # If true, only compare comments within same lead when possible.
+  lead_gate: true
