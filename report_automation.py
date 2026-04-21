@@ -24,13 +24,23 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from rapidfuzz import fuzz, process
 
 EMAIL_PATTERN = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
+CRM_SOURCE_COL = "crm_source_file"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Automate CRM report generation using CRM and PowerBI files."
     )
-    parser.add_argument("--crm", required=True, help="Path to CRM export (csv/xlsx).")
+    parser.add_argument(
+        "--crm",
+        required=True,
+        action="append",
+        nargs="+",
+        help=(
+            "One or more CRM export paths (csv/xlsx). "
+            "Example: --crm a.xlsx b.xlsx c.xlsx or --crm a.xlsx --crm b.xlsx"
+        ),
+    )
     parser.add_argument(
         "--powerbi", required=True, help="Path to PowerBI export (csv/xlsx)."
     )
@@ -66,6 +76,42 @@ def read_table(path: str) -> pd.DataFrame:
     raise ValueError(
         f"Unsupported file type: {suffix}. Use csv/xlsx/xls for {file_path.name}"
     )
+
+
+def read_and_combine_crm_tables(
+    crm_paths: list[str], config: dict[str, Any]
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if not crm_paths:
+        raise ValueError("At least one CRM file path is required.")
+
+    crm_cols = config["columns"]["crm"]
+    required_cols = [
+        crm_cols["lead"],
+        crm_cols["customer_no"],
+        crm_cols["comment"],
+        crm_cols["aff"],
+        crm_cols["status"],
+    ]
+
+    crm_frames: list[pd.DataFrame] = []
+    source_rows: list[dict[str, Any]] = []
+    for crm_path in crm_paths:
+        crm_df = read_table(crm_path)
+        validate_required_columns(crm_df, required_cols, f"CRM file ({crm_path})")
+        crm_df = crm_df.copy()
+        crm_df[CRM_SOURCE_COL] = Path(crm_path).name
+        crm_frames.append(crm_df)
+        source_rows.append(
+            {
+                "crm_file": Path(crm_path).name,
+                "source_path": crm_path,
+                "row_count": int(len(crm_df)),
+            }
+        )
+
+    combined = pd.concat(crm_frames, ignore_index=True, sort=False)
+    source_audit = pd.DataFrame(source_rows)
+    return combined, source_audit
 
 
 def normalize_text(value: Any) -> str:
@@ -781,6 +827,7 @@ def write_dashboard_sheet(workbook: Any, summaries: dict[str, pd.DataFrame], con
 def write_output_excel(
     output_path: str,
     crm_enriched: pd.DataFrame,
+    crm_source_audit: pd.DataFrame,
     match_audit: pd.DataFrame,
     purple_merge_audit: pd.DataFrame,
     summaries: dict[str, pd.DataFrame],
@@ -788,6 +835,7 @@ def write_output_excel(
 ) -> None:
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         crm_enriched.to_excel(writer, sheet_name="crm_enriched", index=False)
+        crm_source_audit.to_excel(writer, sheet_name="crm_source_audit", index=False)
         match_audit.to_excel(writer, sheet_name="match_audit", index=False)
         if not purple_merge_audit.empty:
             purple_merge_audit.to_excel(writer, sheet_name="purple_merge_audit", index=False)
@@ -808,7 +856,10 @@ def main() -> None:
     config = load_config(args.config)
     validate_config(config)
 
-    crm_df = read_table(args.crm)
+    crm_paths = [path for group in args.crm for path in group]
+    crm_df, crm_source_audit = read_and_combine_crm_tables(
+        crm_paths=crm_paths, config=config
+    )
     power_df = read_table(args.powerbi)
     purple_merge_audit = pd.DataFrame()
     purple_cfg = config.get("purple_source", {})
@@ -852,6 +903,7 @@ def main() -> None:
     write_output_excel(
         output_path=args.output,
         crm_enriched=crm_enriched,
+        crm_source_audit=crm_source_audit,
         match_audit=match_audit,
         purple_merge_audit=purple_merge_audit,
         summaries=summaries,
@@ -862,7 +914,8 @@ def main() -> None:
     total_rows = len(crm_enriched)
     print(
         f"Done. Output saved to {args.output} | "
-        f"Customer number resolved rows: {resolved_count}/{total_rows}"
+        f"Customer number resolved rows: {resolved_count}/{total_rows} | "
+        f"CRM files merged: {len(crm_paths)}"
     )
 
 

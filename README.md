@@ -4,31 +4,32 @@ CRM Reporting Tool for FTD, CR, performance analytics, agent calls, check-in/che
 
 ## Yeni: CRM + PowerBI rapor otomasyonu
 
-Bu repoya `report_automation.py` eklendi. Script temel olarak iki dosya ile çalışır, opsiyonel olarak 3. bir dosya da alabilir:
+Bu repoya `report_automation.py` eklendi. Script bir veya birden fazla CRM dosyasıyla çalışır; ayrıca PowerBI ve opsiyonel 3. dosya alabilir:
 
-- CRM export (csv/xlsx)
+- CRM export (csv/xlsx, birden fazla verebilirsin)
 - PowerBI export (csv/xlsx)
 - Purple source export (csv/xlsx, opsiyonel - örn. Comments / Call Att gibi mor sütunlar)
 
 ### Ne yapar?
 
-1. CRM dosyasındaki müşteri numarası boş olan satırları PowerBI verisiyle doldurmaya çalışır.
-2. Yorum eşleştirmesinde:
+1. Birden fazla CRM dosyası verirsen önce tek tabloda birleştirir.
+2. CRM dosyasındaki müşteri numarası boş olan satırları PowerBI verisiyle doldurmaya çalışır.
+3. Yorum eşleştirmesinde:
    - önce exact eşleşme,
    - yoksa fuzzy (yaklaşık) eşleşme kullanır.
-3. Mor sütunları ayrı dosyadan (`--purple`) CRM'e join ederek getirir (opsiyonel).
+4. Mor sütunları ayrı dosyadan (`--purple`) CRM'e join ederek getirir (opsiyonel).
    - `transform: comment_history` kullanırsan:
      - yorum başındaki tarih ve isim kısmını atar,
      - email içeren satırları çıkarır,
      - yorum sırasını tersten yazar (en yeni/en alttaki önce),
      - sadece temiz yorum metnini CRM'e yazar.
-4. Lead bazında kaç kere arandığını hesaplar ve `lead_call_count` kolonu ekler.
-5. Aşağıdaki özet tabloları üretir:
+5. Lead bazında kaç kere arandığını hesaplar ve `lead_call_count` kolonu ekler.
+6. Aşağıdaki özet tabloları üretir:
    - `lead_call_counts`
    - `call_count_distribution`
    - `aff_status_ratios`
    - `call_frequency_by_aff_status`
-6. Çıktıyı tek bir Excel dosyasına (çoklu sheet) yazar.
+7. Çıktıyı tek bir Excel dosyasına (çoklu sheet) yazar.
 
 ### Kurulum
 
@@ -48,9 +49,18 @@ cp config.example.yml config.yml
 
 ```bash
 python report_automation.py \
-  --crm ./data/crm.xlsx \
+  --crm ./data/crm_1.xlsx ./data/crm_2.xlsx ./data/crm_3.xlsx \
   --powerbi ./data/powerbi.xlsx \
   --purple ./data/purple_source.xlsx \
+  --config ./config.yml \
+  --output ./report_output.xlsx
+```
+
+Tek CRM için de aynı parametre geçerli:
+```bash
+python report_automation.py \
+  --crm ./data/crm.xlsx \
+  --powerbi ./data/powerbi.xlsx \
   --config ./config.yml \
   --output ./report_output.xlsx
 ```
@@ -71,6 +81,7 @@ python report_automation.py \
 ### Çıktı sayfaları
 
 - `crm_enriched`: CRM satırları + doldurulan müşteri numarası + eşleşme bilgileri
+  - birden fazla CRM verdiysen `crm_source_file` kolonu hangi dosyadan geldiğini gösterir
 - `match_audit`: hangi satır nasıl eşleşti (exact/fuzzy/not_found)
 - `purple_merge_audit`: mor sütun merge işlemi özeti (kaç satır eşleşti/uygulandı)
 - `lead_call_counts`: lead başına arama sayısı
