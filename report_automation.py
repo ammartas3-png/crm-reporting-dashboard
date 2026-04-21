@@ -4,8 +4,9 @@ CRM + PowerBI report automation utility.
 
 This script:
 1) enriches CRM records with customer numbers from a PowerBI export,
-2) supports exact and fuzzy comment matching,
-3) produces lead call counts, AFF/Status ratios, and call-frequency tables.
+2) optionally enriches extra columns (e.g. purple columns) from a 3rd file,
+3) supports exact and fuzzy comment matching,
+4) produces lead call counts, AFF/Status ratios, and call-frequency tables.
 """
 
 from __future__ import annotations
@@ -30,6 +31,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--crm", required=True, help="Path to CRM export (csv/xlsx).")
     parser.add_argument(
         "--powerbi", required=True, help="Path to PowerBI export (csv/xlsx)."
+    )
+    parser.add_argument(
+        "--purple",
+        help=(
+            "Optional path to extra source file (csv/xlsx) used for columns such as "
+            "Comments/Call Att."
+        ),
     )
     parser.add_argument(
         "--config",
@@ -68,6 +76,12 @@ def normalize_text(value: Any) -> str:
     return text
 
 
+def normalize_join_key(value: Any) -> str:
+    if pd.isna(value):
+        return ""
+    return str(value).strip().casefold()
+
+
 def load_config(path: str) -> dict[str, Any]:
     with open(path, "r", encoding="utf-8") as file:
         config = yaml.safe_load(file) or {}
@@ -98,6 +112,41 @@ def validate_config(config: dict[str, Any]) -> None:
     for col_key in required_power_cols:
         if col_key not in config["columns"]["powerbi"]:
             raise ValueError(f"Missing config key: columns.powerbi.{col_key}")
+
+    if "purple_source" in config:
+        purple_cfg = config["purple_source"]
+        if not isinstance(purple_cfg, dict):
+            raise ValueError("Config section 'purple_source' must be dict")
+
+        stage = purple_cfg.get("stage", "before_customer_match")
+        if stage not in {"before_customer_match", "after_customer_match"}:
+            raise ValueError(
+                "purple_source.stage must be 'before_customer_match' or "
+                "'after_customer_match'"
+            )
+
+        if "join" not in purple_cfg or not isinstance(purple_cfg["join"], dict):
+            raise ValueError("Missing or invalid config section: purple_source.join")
+        if "crm_key" not in purple_cfg["join"] or "source_key" not in purple_cfg["join"]:
+            raise ValueError(
+                "Missing config keys: purple_source.join.crm_key/source_key"
+            )
+
+        if "columns" not in purple_cfg or not isinstance(purple_cfg["columns"], list):
+            raise ValueError("Missing or invalid config section: purple_source.columns")
+        if not purple_cfg["columns"]:
+            raise ValueError("Config section 'purple_source.columns' cannot be empty")
+
+        for idx, col_map in enumerate(purple_cfg["columns"]):
+            if not isinstance(col_map, dict):
+                raise ValueError(
+                    f"purple_source.columns[{idx}] must be an object "
+                    "(source/target/overwrite)"
+                )
+            if "source" not in col_map or "target" not in col_map:
+                raise ValueError(
+                    f"Missing config keys in purple_source.columns[{idx}]: source/target"
+                )
 
 
 def validate_required_columns(df: pd.DataFrame, required_cols: list[str], label: str) -> None:
@@ -254,6 +303,110 @@ def enrich_crm_with_customer_numbers(
 
     match_audit = pd.DataFrame(match_rows)
     return crm, match_audit
+
+
+def enrich_crm_with_purple_columns(
+    crm_df: pd.DataFrame, purple_df: pd.DataFrame, config: dict[str, Any]
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    purple_cfg = config.get("purple_source")
+    if not purple_cfg:
+        return crm_df.copy(), pd.DataFrame()
+
+    join_cfg = purple_cfg["join"]
+    mappings = purple_cfg["columns"]
+    crm_key = join_cfg["crm_key"]
+    source_key = join_cfg["source_key"]
+    source_cols = [m["source"] for m in mappings]
+
+    validate_required_columns(crm_df, [crm_key], "CRM file")
+    validate_required_columns(purple_df, [source_key, *source_cols], "Purple source file")
+
+    crm = crm_df.copy()
+    source = purple_df.copy()
+
+    crm["_join_key"] = crm[crm_key].map(normalize_join_key)
+    source["_join_key"] = source[source_key].map(normalize_join_key)
+    source = source[source["_join_key"].astype(bool)]
+
+    source_rows_before_dedupe = len(source)
+    source = source.drop_duplicates(subset="_join_key", keep="first")
+    duplicate_source_rows = source_rows_before_dedupe - len(source)
+
+    source_renamed_cols: dict[str, str] = {}
+    for idx, mapping in enumerate(mappings):
+        source_renamed_cols[mapping["source"]] = f"_purple_{idx}"
+    source = source.rename(columns=source_renamed_cols)
+
+    merge_columns = ["_join_key", *source_renamed_cols.values()]
+    merged = crm.merge(source[merge_columns], on="_join_key", how="left")
+
+    audit_rows: list[dict[str, Any]] = []
+    for idx, mapping in enumerate(mappings):
+        target_col = mapping["target"]
+        source_col = source_renamed_cols[mapping["source"]]
+        overwrite = bool(mapping.get("overwrite", True))
+
+        source_values = merged[source_col]
+        old_values = merged[target_col].copy() if target_col in merged.columns else pd.Series(
+            [pd.NA] * len(merged), index=merged.index
+        )
+
+        if overwrite:
+            new_values = source_values.combine_first(old_values)
+        else:
+            new_values = old_values.combine_first(source_values)
+
+        equal_or_both_na = old_values.eq(new_values) | (old_values.isna() & new_values.isna())
+        merged[target_col] = new_values
+
+        audit_rows.append(
+            {
+                "target_column": target_col,
+                "source_column": mapping["source"],
+                "overwrite": overwrite,
+                "source_non_null_rows": int(source_values.notna().sum()),
+                "applied_rows": int((~equal_or_both_na).sum()),
+            }
+        )
+
+    matched_rows = int(merged["_join_key"].isin(set(source["_join_key"])).sum())
+    unmatched_rows = int(len(merged) - matched_rows)
+
+    audit_rows.extend(
+        [
+            {
+                "target_column": "__meta__",
+                "source_column": "crm_rows",
+                "overwrite": None,
+                "source_non_null_rows": None,
+                "applied_rows": int(len(merged)),
+            },
+            {
+                "target_column": "__meta__",
+                "source_column": "matched_rows",
+                "overwrite": None,
+                "source_non_null_rows": None,
+                "applied_rows": matched_rows,
+            },
+            {
+                "target_column": "__meta__",
+                "source_column": "unmatched_rows",
+                "overwrite": None,
+                "source_non_null_rows": None,
+                "applied_rows": unmatched_rows,
+            },
+            {
+                "target_column": "__meta__",
+                "source_column": "duplicate_source_rows_skipped",
+                "overwrite": None,
+                "source_non_null_rows": None,
+                "applied_rows": int(duplicate_source_rows),
+            },
+        ]
+    )
+
+    merged = merged.drop(columns=["_join_key", *source_renamed_cols.values()])
+    return merged, pd.DataFrame(audit_rows)
 
 
 def build_summary_tables(crm_enriched: pd.DataFrame, config: dict[str, Any]) -> dict[str, pd.DataFrame]:
@@ -548,12 +701,15 @@ def write_output_excel(
     output_path: str,
     crm_enriched: pd.DataFrame,
     match_audit: pd.DataFrame,
+    purple_merge_audit: pd.DataFrame,
     summaries: dict[str, pd.DataFrame],
     config: dict[str, Any],
 ) -> None:
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         crm_enriched.to_excel(writer, sheet_name="crm_enriched", index=False)
         match_audit.to_excel(writer, sheet_name="match_audit", index=False)
+        if not purple_merge_audit.empty:
+            purple_merge_audit.to_excel(writer, sheet_name="purple_merge_audit", index=False)
         for sheet_name in [
             "lead_call_counts",
             "call_count_distribution",
@@ -573,12 +729,36 @@ def main() -> None:
 
     crm_df = read_table(args.crm)
     power_df = read_table(args.powerbi)
+    purple_merge_audit = pd.DataFrame()
+    purple_cfg = config.get("purple_source", {})
+    purple_stage = purple_cfg.get("stage", "before_customer_match")
+
+    if args.purple and purple_stage == "before_customer_match":
+        if "purple_source" not in config:
+            raise ValueError(
+                "--purple verildi fakat config içinde 'purple_source' bölümü bulunamadı."
+            )
+        purple_df = read_table(args.purple)
+        crm_df, purple_merge_audit = enrich_crm_with_purple_columns(
+            crm_df=crm_df, purple_df=purple_df, config=config
+        )
 
     crm_enriched, match_audit = enrich_crm_with_customer_numbers(
         crm_df=crm_df,
         power_df=power_df,
         config=config,
     )
+
+    if args.purple and purple_stage == "after_customer_match":
+        if "purple_source" not in config:
+            raise ValueError(
+                "--purple verildi fakat config içinde 'purple_source' bölümü bulunamadı."
+            )
+        purple_df = read_table(args.purple)
+        crm_enriched, purple_merge_audit = enrich_crm_with_purple_columns(
+            crm_df=crm_enriched, purple_df=purple_df, config=config
+        )
+
     summaries = build_summary_tables(crm_enriched=crm_enriched, config=config)
     lead_counts_map = dict(
         zip(
@@ -592,6 +772,7 @@ def main() -> None:
         output_path=args.output,
         crm_enriched=crm_enriched,
         match_audit=match_audit,
+        purple_merge_audit=purple_merge_audit,
         summaries=summaries,
         config=config,
     )

@@ -15,3 +15,26 @@ match:
   fuzzy_threshold: 80
   # If true, only compare comments within same lead when possible.
   lead_gate: true
+
+# Optional: separate source for "purple" columns (example: Comments, Call Att).
+# You can remove this block if you do not need a 3rd source file.
+purple_source:
+  # "before_customer_match": join purple file before PowerBI customer-no enrichment
+  # "after_customer_match": join purple file after customer-no enrichment
+  stage: "after_customer_match"
+  join:
+    # CRM key column and key column in purple source.
+    # If stage=after_customer_match, crm_key is typically "Customer No".
+    # If stage=before_customer_match, crm_key can be "ID" or another early key.
+    crm_key: "Customer No"
+    source_key: "ID"
+  columns:
+    # source = column name in purple file
+    # target = target column name to write in CRM output
+    # overwrite = true -> purple value has priority, false -> fill only if target empty
+    - source: "Comments"
+      target: "Comments"
+      overwrite: true
+    - source: "Call Att"
+      target: "Call Att"
+      overwrite: true
