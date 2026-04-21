@@ -54,4 +54,6 @@ python report_automation.py \
 - `lead_call_counts`: lead başına arama sayısı
 - `call_count_distribution`: kaç lead kaç kez aranmış dağılımı
 - `aff_status_ratios`: AFF + status bazında adet ve oranlar
+- `overall_status_summary`: tüm status dağılımı (adet + oran)
 - `call_frequency_by_aff_status`: AFF/status/call_count kırılımında lead sayısı
+- `dashboard_summary`: görseldeki gibi formatlanmış toplu özet tablolar

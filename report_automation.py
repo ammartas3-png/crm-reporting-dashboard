@@ -18,6 +18,8 @@ from typing import Any
 
 import pandas as pd
 import yaml
+from openpyxl.formatting.rule import ColorScaleRule
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from rapidfuzz import fuzz, process
 
 
@@ -280,6 +282,12 @@ def build_summary_tables(crm_enriched: pd.DataFrame, config: dict[str, Any]) -> 
         .reset_index(name="lead_count")
         .sort_values("call_count")
     )
+    total_leads = call_count_distribution["lead_count"].sum()
+    call_count_distribution["ratio_overall"] = (
+        (call_count_distribution["lead_count"] / total_leads).round(4)
+        if total_leads
+        else 0.0
+    )
 
     aff_status_counts = (
         crm_enriched.groupby([aff_col, status_col], dropna=False)
@@ -290,6 +298,22 @@ def build_summary_tables(crm_enriched: pd.DataFrame, config: dict[str, Any]) -> 
     aff_status_counts["ratio_within_aff"] = (
         aff_status_counts["call_count"] / aff_totals
     ).round(4)
+    aff_status_counts = aff_status_counts.sort_values(
+        [aff_col, "call_count"], ascending=[True, False]
+    )
+
+    overall_status_summary = (
+        crm_enriched.groupby(status_col, dropna=False)
+        .size()
+        .reset_index(name="call_count")
+        .sort_values("call_count", ascending=False)
+    )
+    total_calls = overall_status_summary["call_count"].sum()
+    overall_status_summary["ratio_overall"] = (
+        (overall_status_summary["call_count"] / total_calls).round(4)
+        if total_calls
+        else 0.0
+    )
 
     lead_aff_status_calls = (
         crm_enriched.groupby([lead_col, aff_col, status_col], dropna=False)
@@ -308,8 +332,216 @@ def build_summary_tables(crm_enriched: pd.DataFrame, config: dict[str, Any]) -> 
         "lead_call_counts": lead_call_counts,
         "call_count_distribution": call_count_distribution,
         "aff_status_ratios": aff_status_counts,
+        "overall_status_summary": overall_status_summary,
         "call_frequency_by_aff_status": call_frequency_by_aff_status,
     }
+
+
+def build_aff_status_dashboard_rows(
+    aff_status_ratios: pd.DataFrame, aff_col: str, status_col: str
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for aff_value, group in aff_status_ratios.groupby(aff_col, dropna=False):
+        aff_label = "BLANK" if pd.isna(aff_value) else str(aff_value)
+        group_total = int(group["call_count"].sum())
+        for _, row in group.iterrows():
+            status_label = "BLANK" if pd.isna(row[status_col]) else str(row[status_col])
+            rows.append(
+                {
+                    "aff": aff_label,
+                    "status": status_label,
+                    "count": int(row["call_count"]),
+                    "ratio": float(row["ratio_within_aff"]),
+                    "is_total": False,
+                }
+            )
+        rows.append(
+            {
+                "aff": aff_label,
+                "status": "TOTAL",
+                "count": group_total,
+                "ratio": 1.0,
+                "is_total": True,
+            }
+        )
+    rows.append(
+        {
+            "aff": "GRAND TOTAL",
+            "status": "",
+            "count": int(aff_status_ratios["call_count"].sum()),
+            "ratio": 1.0,
+            "is_total": True,
+        }
+    )
+    return rows
+
+
+def write_dashboard_sheet(workbook: Any, summaries: dict[str, pd.DataFrame], config: dict[str, Any]) -> None:
+    ws = workbook.create_sheet("dashboard_summary")
+    crm_cols = config["columns"]["crm"]
+    aff_col = crm_cols["aff"]
+    status_col = crm_cols["status"]
+
+    header_fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
+    total_fill = PatternFill(start_color="BFBFBF", end_color="BFBFBF", fill_type="solid")
+    thin_border = Border(
+        left=Side(style="thin"),
+        right=Side(style="thin"),
+        top=Side(style="thin"),
+        bottom=Side(style="thin"),
+    )
+
+    def write_table_block(
+        start_row: int,
+        start_col: int,
+        title: str,
+        headers: list[str],
+        rows: list[dict[str, Any]],
+        percent_key: str,
+    ) -> None:
+        title_cell = ws.cell(row=start_row, column=start_col, value=title)
+        title_cell.font = Font(bold=True)
+        title_cell.alignment = Alignment(horizontal="center")
+        ws.merge_cells(
+            start_row=start_row,
+            start_column=start_col,
+            end_row=start_row,
+            end_column=start_col + len(headers) - 1,
+        )
+        for col_idx, header in enumerate(headers):
+            cell = ws.cell(row=start_row + 1, column=start_col + col_idx, value=header)
+            cell.font = Font(bold=True)
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center")
+            cell.border = thin_border
+
+        data_start = start_row + 2
+        data_end = data_start + len(rows) - 1
+
+        for row_offset, row in enumerate(rows):
+            current_row = data_start + row_offset
+            values = [row["c1"], row["c2"], row["c3"], row["c4"]]
+            for col_offset, value in enumerate(values):
+                cell = ws.cell(row=current_row, column=start_col + col_offset, value=value)
+                cell.border = thin_border
+                if col_offset == 3:
+                    cell.number_format = "0.00%"
+                    cell.alignment = Alignment(horizontal="center")
+                elif col_offset == 2:
+                    cell.alignment = Alignment(horizontal="center")
+                else:
+                    cell.alignment = Alignment(horizontal="left")
+                if row["is_total"]:
+                    cell.fill = total_fill
+                    cell.font = Font(bold=True)
+
+        if rows:
+            percent_col_letter = ws.cell(row=data_start, column=start_col + 3).column_letter
+            ws.conditional_formatting.add(
+                f"{percent_col_letter}{data_start}:{percent_col_letter}{data_end}",
+                ColorScaleRule(
+                    start_type="num",
+                    start_value=0,
+                    start_color="F8696B",
+                    mid_type="num",
+                    mid_value=0.5,
+                    mid_color="FFEB84",
+                    end_type="num",
+                    end_value=1,
+                    end_color="63BE7B",
+                ),
+            )
+
+    aff_rows = build_aff_status_dashboard_rows(
+        summaries["aff_status_ratios"], aff_col=aff_col, status_col=status_col
+    )
+    aff_block = [
+        {
+            "c1": row["aff"],
+            "c2": row["status"],
+            "c3": row["count"],
+            "c4": row["ratio"],
+            "is_total": row["is_total"],
+        }
+        for row in aff_rows
+    ]
+    write_table_block(
+        start_row=2,
+        start_col=1,
+        title="AFF + Status Breakdown",
+        headers=["AFF", "Status", "Count", "Ratio"],
+        rows=aff_block,
+        percent_key="c4",
+    )
+
+    overall_rows = [
+        {
+            "c1": ("BLANK" if pd.isna(row[status_col]) else str(row[status_col])),
+            "c2": "",
+            "c3": int(row["call_count"]),
+            "c4": float(row["ratio_overall"]),
+            "is_total": False,
+        }
+        for _, row in summaries["overall_status_summary"].iterrows()
+    ]
+    overall_rows.append(
+        {
+            "c1": "TOTAL",
+            "c2": "",
+            "c3": int(summaries["overall_status_summary"]["call_count"].sum()),
+            "c4": 1.0,
+            "is_total": True,
+        }
+    )
+    write_table_block(
+        start_row=2,
+        start_col=7,
+        title="Overall Status Distribution",
+        headers=["Status", "", "Count", "Ratio"],
+        rows=overall_rows,
+        percent_key="c4",
+    )
+
+    call_dist_rows = [
+        {
+            "c1": int(row["call_count"]),
+            "c2": "",
+            "c3": int(row["lead_count"]),
+            "c4": float(row["ratio_overall"]),
+            "is_total": False,
+        }
+        for _, row in summaries["call_count_distribution"].iterrows()
+    ]
+    call_dist_rows.append(
+        {
+            "c1": "TOTAL",
+            "c2": "",
+            "c3": int(summaries["call_count_distribution"]["lead_count"].sum()),
+            "c4": 1.0,
+            "is_total": True,
+        }
+    )
+    write_table_block(
+        start_row=14,
+        start_col=7,
+        title="Lead Call Count Distribution",
+        headers=["Call Count", "", "Lead Count", "Ratio"],
+        rows=call_dist_rows,
+        percent_key="c4",
+    )
+
+    column_widths = {
+        1: 18,
+        2: 24,
+        3: 10,
+        4: 12,
+        7: 18,
+        8: 2,
+        9: 12,
+        10: 12,
+    }
+    for col_index, width in column_widths.items():
+        ws.column_dimensions[ws.cell(row=1, column=col_index).column_letter].width = width
 
 
 def write_output_excel(
@@ -317,12 +549,21 @@ def write_output_excel(
     crm_enriched: pd.DataFrame,
     match_audit: pd.DataFrame,
     summaries: dict[str, pd.DataFrame],
+    config: dict[str, Any],
 ) -> None:
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         crm_enriched.to_excel(writer, sheet_name="crm_enriched", index=False)
         match_audit.to_excel(writer, sheet_name="match_audit", index=False)
-        for sheet_name, df in summaries.items():
+        for sheet_name in [
+            "lead_call_counts",
+            "call_count_distribution",
+            "aff_status_ratios",
+            "overall_status_summary",
+            "call_frequency_by_aff_status",
+        ]:
+            df = summaries[sheet_name]
             df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
+        write_dashboard_sheet(writer.book, summaries=summaries, config=config)
 
 
 def main() -> None:
@@ -339,7 +580,12 @@ def main() -> None:
         config=config,
     )
     summaries = build_summary_tables(crm_enriched=crm_enriched, config=config)
-    lead_counts_map = dict(zip(summaries["lead_call_counts"][config["columns"]["crm"]["lead"]], summaries["lead_call_counts"]["call_count"]))
+    lead_counts_map = dict(
+        zip(
+            summaries["lead_call_counts"][config["columns"]["crm"]["lead"]],
+            summaries["lead_call_counts"]["call_count"],
+        )
+    )
     crm_enriched["lead_call_count"] = crm_enriched[config["columns"]["crm"]["lead"]].map(lead_counts_map)
 
     write_output_excel(
@@ -347,6 +593,7 @@ def main() -> None:
         crm_enriched=crm_enriched,
         match_audit=match_audit,
         summaries=summaries,
+        config=config,
     )
 
     resolved_count = crm_enriched["resolved_customer_no"].notna().sum()
