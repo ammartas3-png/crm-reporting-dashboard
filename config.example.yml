@@ -44,6 +44,16 @@ purple_source:
         reverse_order: true
         ignore_keywords: ["email"]
         output_separator: " ; "
+        compress_repeated_codes: true
+        min_repeat_count: 2
+        # Optional alias map for short comment codes.
+        # Example output: "na ; na ; na" -> "3xna"
+        code_aliases:
+          "dvm let": "dvm"
+          "dvmlet": "dvm"
+          "dvm": "dvm"
+          "vm": "vm"
+          "na": "na"
     - source: "Call Att"
       target: "Call Att"
       overwrite: true

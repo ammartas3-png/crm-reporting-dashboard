@@ -22,6 +22,7 @@ Bu repoya `report_automation.py` eklendi. Script bir veya birden fazla CRM dosya
      - yorum başındaki tarih ve isim kısmını atar,
      - email içeren satırları çıkarır,
      - yorum sırasını tersten yazar (en yeni/en alttaki önce),
+     - ardışık kısa tekrarları sıkıştırır (örn: `na na na` -> `3xna`, `dvm let dvm let` -> `2xdvm`),
      - sadece temiz yorum metnini CRM'e yazar.
 5. Lead bazında kaç kere arandığını hesaplar ve `lead_call_count` kolonu ekler.
 6. Aşağıdaki özet tabloları üretir:
@@ -77,6 +78,9 @@ python report_automation.py \
   - `reverse_order`: true/false
   - `ignore_keywords`: örn `["email"]`
   - `output_separator`: örn `" ; "`
+  - `compress_repeated_codes`: true/false
+  - `min_repeat_count`: sıkıştırma için minimum tekrar (örn 2)
+  - `code_aliases`: kısa kod eşdeğerleri (örn `"dvm let": "dvm"`)
 
 ### Çıktı sayfaları
 

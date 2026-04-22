@@ -25,6 +25,13 @@ from rapidfuzz import fuzz, process
 
 EMAIL_PATTERN = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
 CRM_SOURCE_COL = "crm_source_file"
+DEFAULT_CODE_ALIASES = {
+    "dvm let": "dvm",
+    "dvmlet": "dvm",
+    "dvm": "dvm",
+    "vm": "vm",
+    "na": "na",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -149,6 +156,86 @@ def should_skip_comment(comment_text: str, ignore_keywords: list[str]) -> bool:
     return any(keyword.casefold() in lowered for keyword in ignore_keywords)
 
 
+def canonical_short_code(comment_text: str, options: dict[str, Any]) -> str | None:
+    cleaned = re.sub(r"[^a-z0-9\s]", " ", str(comment_text).casefold())
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        return None
+
+    raw_aliases = options.get("code_aliases", DEFAULT_CODE_ALIASES)
+    aliases = (
+        raw_aliases
+        if isinstance(raw_aliases, dict)
+        else DEFAULT_CODE_ALIASES
+    )
+    normalized_aliases = {
+        re.sub(r"\s+", " ", str(key).casefold()).strip(): str(value).casefold().strip()
+        for key, value in aliases.items()
+    }
+    if cleaned in normalized_aliases:
+        return normalized_aliases[cleaned]
+
+    max_code_words = int(options.get("max_code_words", 2))
+    max_code_length = int(options.get("max_code_length", 8))
+
+    tokens = cleaned.split()
+    if len(tokens) > max_code_words:
+        return None
+    if len(cleaned) > max_code_length:
+        return None
+
+    # Treat short compact entries as status code-like comments.
+    if all(len(token) <= 4 for token in tokens):
+        return "".join(tokens)
+    return None
+
+
+def compress_consecutive_comment_codes(
+    parsed_comments: list[str], options: dict[str, Any]
+) -> list[str]:
+    if not parsed_comments:
+        return parsed_comments
+
+    compress_repeated_codes = bool(options.get("compress_repeated_codes", True))
+    if not compress_repeated_codes:
+        return parsed_comments
+
+    min_repeat_count = max(2, int(options.get("min_repeat_count", 2)))
+    compressed: list[str] = []
+
+    run_code: str | None = None
+    run_items: list[str] = []
+
+    def flush_run() -> None:
+        nonlocal run_code, run_items
+        if not run_items:
+            return
+        if run_code and len(run_items) >= min_repeat_count:
+            compressed.append(f"{len(run_items)}x{run_code}")
+        else:
+            compressed.extend(run_items)
+        run_code = None
+        run_items = []
+
+    for comment in parsed_comments:
+        code = canonical_short_code(comment, options)
+        if code is None:
+            flush_run()
+            compressed.append(comment)
+            continue
+
+        if run_code == code:
+            run_items.append(comment)
+            continue
+
+        flush_run()
+        run_code = code
+        run_items = [comment]
+
+    flush_run()
+    return compressed
+
+
 def transform_comment_history(raw_value: Any, options: dict[str, Any] | None = None) -> Any:
     if pd.isna(raw_value):
         return pd.NA
@@ -176,6 +263,7 @@ def transform_comment_history(raw_value: Any, options: dict[str, Any] | None = N
 
     if reverse_order:
         parsed_comments = list(reversed(parsed_comments))
+    parsed_comments = compress_consecutive_comment_codes(parsed_comments, options)
     if not parsed_comments:
         return pd.NA
     return output_separator.join(parsed_comments)
