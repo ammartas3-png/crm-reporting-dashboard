@@ -1,7 +1,6 @@
 {
   "functions": {
     "api/generate.py": {
-      "runtime": "python3.12",
       "maxDuration": 60
     }
   },
