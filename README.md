@@ -6,21 +6,21 @@ Interactive web GUI for generating CRM + PowerBI Excel reports.
 
 The web app lets you choose between two separate report programs:
 
-- **Program A - CRM Output Report**: the original deployed CRM output workbook
+- **Report Generator**: the original deployed CRM output workbook
   with combined data and pivots.
-- **Program B - Country Split Report**: a Main Report sheet plus one sheet per
+- **M-inhousemedia report**: a Main Report sheet plus one sheet per
   Country, with formula-linked country rows and centered pivots.
 
 Both programs use the same uploaded inputs:
 
 - PowerBI report file upload
 - Optional PowerBI sheet name
-- Pivot table name for Program A
+- Pivot table name for Report Generator
 - Up to four CRM file uploads in fixed browse rows
 - Platform name beside each uploaded CRM file
 - Optional CRM sheet name shared by all CRM files
-- Optional output filename. Program A defaults to `crm_powerbi_output.xlsx`;
-  Program B defaults to `crm_country_report.xlsx`.
+- Optional output filename. Report Generator defaults to `crm_powerbi_output.xlsx`;
+  M-inhousemedia report defaults to `crm_country_report.xlsx`.
 
 After submission, the Python serverless function generates the enriched `.xlsx`
 workbook and returns it as a browser download.

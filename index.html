@@ -12,8 +12,8 @@
         <p class="eyebrow">Report generator</p>
         <h1>CRM + PowerBI Report Dashboard</h1>
         <p>
-          Choose Program A or Program B, upload the required Excel files, and
-          generate the selected enriched workbook in the browser.
+          Choose Report Generator or M-inhousemedia report, upload the required
+          Excel files, and generate the selected enriched workbook in the browser.
         </p>
       </section>
 
@@ -24,7 +24,7 @@
             <label class="program-card">
               <input type="radio" name="program" value="program_a" checked />
               <span>
-                <strong>Program A - CRM Output Report</strong>
+                <strong>Report Generator</strong>
                 <small>
                   Combined CRM output sheet with status, call-attempt, and
                   campaign pivots. Requires a manual pivot table name.
@@ -35,7 +35,7 @@
             <label class="program-card">
               <input type="radio" name="program" value="program_b" />
               <span>
-                <strong>Program B - Country Split Report</strong>
+                <strong>M-inhousemedia report</strong>
                 <small>
                   Main Report sheet plus one country sheet per Country, with
                   formula-linked country rows and centered pivots.
@@ -74,7 +74,7 @@
           <label>
             Pivot table name
             <span id="pivot-hint" class="hint">
-              Required for Program A. Used as the label on the status pivot.
+              Required for Report Generator. Used as the label on the status pivot.
             </span>
             <input
               id="pivot-name"
@@ -262,7 +262,7 @@
           fallbackDownload: "crm_powerbi_output.xlsx",
           pivotRequired: true,
           pivotHint:
-            "Required for Program A. Used as the label on the status pivot.",
+            "Required for Report Generator. Used as the label on the status pivot.",
           outputHint:
             "Leave blank for crm_powerbi_output.xlsx. In the web app this is used as the downloaded filename.",
         },
@@ -271,7 +271,7 @@
           fallbackDownload: "crm_country_report.xlsx",
           pivotRequired: false,
           pivotHint:
-            "Program B uses fixed workbook labels: Main Report uses M-Inhousemedia and country sheets use country names.",
+            "M-inhousemedia report uses fixed workbook labels: Main Report uses M-Inhousemedia and country sheets use country names.",
           outputHint:
             "Leave blank for crm_country_report.xlsx. In the web app this is used as the downloaded filename.",
         },

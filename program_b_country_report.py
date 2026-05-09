@@ -1,6 +1,7 @@
-"""Program B: create a CRM country-split workbook.
+"""M-inhousemedia report: create a CRM country-split workbook.
 
-Program B shares the CRM/PowerBI merge rules with Program A, then writes:
+M-inhousemedia report shares the CRM/PowerBI merge rules with Report Generator,
+then writes:
 
 - a "Main Report" sheet with all rows, a status pivot labelled "M-Inhousemedia",
   and a call-attempts pivot below the data table;

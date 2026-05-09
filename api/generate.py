@@ -76,7 +76,7 @@ def _output_filename(raw_name: str, fallback: str) -> str:
 def _program_from_form(form: cgi.FieldStorage) -> str:
     program = _field_text(form, "program") or PROGRAM_A
     if program not in {PROGRAM_A, PROGRAM_B}:
-        raise ValueError("Please select Program A or Program B.")
+        raise ValueError("Please select Report Generator or M-inhousemedia report.")
     return program
 
 
@@ -168,7 +168,7 @@ class handler(BaseHTTPRequestHandler):
 
             pivot_name = _field_text(form, "pivot_name")
             if program == PROGRAM_A and not pivot_name:
-                raise ValueError("Pivot table name is required for Program A.")
+                raise ValueError("Pivot table name is required for Report Generator.")
 
             crm_count_raw = _field_text(form, "crm_count")
             try:
