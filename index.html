@@ -3,21 +3,48 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>CRM + PowerBI Merge Tool</title>
+    <title>CRM + PowerBI Report Dashboard</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <main class="shell">
       <section class="hero">
         <p class="eyebrow">Report generator</p>
-        <h1>CRM + PowerBI Merge Tool</h1>
+        <h1>CRM + PowerBI Report Dashboard</h1>
         <p>
-          Upload the same files and settings the command-line script asks for.
-          The app generates the enriched Excel workbook in the browser.
+          Choose Program A or Program B, upload the required Excel files, and
+          generate the selected enriched workbook in the browser.
         </p>
       </section>
 
       <form id="report-form" class="card">
+        <fieldset>
+          <legend>Select program</legend>
+          <div class="program-grid">
+            <label class="program-card">
+              <input type="radio" name="program" value="program_a" checked />
+              <span>
+                <strong>Program A - CRM Output Report</strong>
+                <small>
+                  Combined CRM output sheet with status, call-attempt, and
+                  campaign pivots. Requires a manual pivot table name.
+                </small>
+              </span>
+            </label>
+
+            <label class="program-card">
+              <input type="radio" name="program" value="program_b" />
+              <span>
+                <strong>Program B - Country Split Report</strong>
+                <small>
+                  Main Report sheet plus one country sheet per Country, with
+                  formula-linked country rows and centered pivots.
+                </small>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+
         <fieldset>
           <legend>PowerBI report</legend>
           <label>
@@ -42,12 +69,15 @@
           </label>
         </fieldset>
 
-        <fieldset>
+        <fieldset id="pivot-fieldset">
           <legend>Pivot</legend>
           <label>
             Pivot table name
-            <span class="hint">Used as the label on the status pivot.</span>
+            <span id="pivot-hint" class="hint">
+              Required for Program A. Used as the label on the status pivot.
+            </span>
             <input
+              id="pivot-name"
               type="text"
               name="pivot_name"
               autocomplete="off"
@@ -175,14 +205,15 @@
 
           <label>
             Output file path / filename
-            <span class="hint">
-              Leave blank for crm_powerbi_output.xlsx. In the web app this is
-              used as the downloaded filename.
+            <span id="output-hint" class="hint">
+              Leave blank for the selected program's default filename. In the
+              web app this is used as the downloaded filename.
             </span>
             <input
               type="text"
               name="output_file"
               autocomplete="off"
+              id="output-file"
               placeholder="crm_powerbi_output.xlsx"
             />
           </label>
@@ -217,12 +248,50 @@
     <script>
       const form = document.querySelector("#report-form");
       const crmRows = [...document.querySelectorAll(".crm-row")];
+      const programInputs = [...document.querySelectorAll('input[name="program"]')];
       const submitButton = document.querySelector("#submit-button");
       const statusEl = document.querySelector("#status");
+      const pivotName = document.querySelector("#pivot-name");
+      const pivotHint = document.querySelector("#pivot-hint");
+      const outputFile = document.querySelector("#output-file");
+      const outputHint = document.querySelector("#output-hint");
+
+      const programConfig = {
+        program_a: {
+          output: "crm_powerbi_output.xlsx",
+          fallbackDownload: "crm_powerbi_output.xlsx",
+          pivotRequired: true,
+          pivotHint:
+            "Required for Program A. Used as the label on the status pivot.",
+          outputHint:
+            "Leave blank for crm_powerbi_output.xlsx. In the web app this is used as the downloaded filename.",
+        },
+        program_b: {
+          output: "crm_country_report.xlsx",
+          fallbackDownload: "crm_country_report.xlsx",
+          pivotRequired: false,
+          pivotHint:
+            "Program B uses fixed workbook labels: Main Report uses M-Inhousemedia and country sheets use country names.",
+          outputHint:
+            "Leave blank for crm_country_report.xlsx. In the web app this is used as the downloaded filename.",
+        },
+      };
 
       function setStatus(message, type = "") {
         statusEl.textContent = message;
         statusEl.className = type;
+      }
+
+      function selectedProgram() {
+        return document.querySelector('input[name="program"]:checked').value;
+      }
+
+      function syncProgramFields() {
+        const config = programConfig[selectedProgram()];
+        pivotName.required = config.pivotRequired;
+        pivotHint.textContent = config.pivotHint;
+        outputFile.placeholder = config.output;
+        outputHint.textContent = config.outputHint;
       }
 
       function validateCrmRows() {
@@ -263,8 +332,14 @@
 
       function filenameFromDisposition(disposition) {
         const match = /filename="?([^";]+)"?/i.exec(disposition || "");
-        return match ? match[1] : "crm_powerbi_output.xlsx";
+        return match
+          ? match[1]
+          : programConfig[selectedProgram()].fallbackDownload;
       }
+
+      programInputs.forEach((input) => {
+        input.addEventListener("change", syncProgramFields);
+      });
 
       crmRows.forEach((row) => {
         row.querySelector(".crm-file-input").addEventListener("change", validateCrmRows);
@@ -273,6 +348,7 @@
 
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
+        syncProgramFields();
         validateCrmRows();
 
         if (!form.reportValidity()) {
@@ -321,6 +397,8 @@
           validateCrmRows();
         }
       });
+
+      syncProgramFields();
     </script>
   </body>
 </html>

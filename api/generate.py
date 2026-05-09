@@ -17,10 +17,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from report_generator import build_output  # noqa: E402
+import program_a_report  # noqa: E402
+import program_b_country_report  # noqa: E402
 
 
-DEFAULT_OUTPUT_FILENAME = "crm_powerbi_output.xlsx"
+PROGRAM_A = "program_a"
+PROGRAM_B = "program_b"
+PROGRAM_A_OUTPUT_FILENAME = "crm_powerbi_output.xlsx"
+PROGRAM_B_OUTPUT_FILENAME = "crm_country_report.xlsx"
 MAX_UPLOAD_BYTES = 45 * 1024 * 1024
 
 
@@ -62,11 +66,18 @@ def _safe_filename(raw_name: str | None, fallback: str) -> str:
     return name or fallback
 
 
-def _output_filename(raw_name: str) -> str:
-    name = _safe_filename(raw_name, DEFAULT_OUTPUT_FILENAME)
+def _output_filename(raw_name: str, fallback: str) -> str:
+    name = _safe_filename(raw_name, fallback)
     if not name.lower().endswith(".xlsx"):
         name = f"{name}.xlsx"
     return name
+
+
+def _program_from_form(form: cgi.FieldStorage) -> str:
+    program = _field_text(form, "program") or PROGRAM_A
+    if program not in {PROGRAM_A, PROGRAM_B}:
+        raise ValueError("Please select Program A or Program B.")
+    return program
 
 
 def _save_upload(
@@ -153,9 +164,11 @@ class handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         try:
             form = _parse_form(self)
+            program = _program_from_form(form)
+
             pivot_name = _field_text(form, "pivot_name")
-            if not pivot_name:
-                raise ValueError("Pivot table name is required.")
+            if program == PROGRAM_A and not pivot_name:
+                raise ValueError("Pivot table name is required for Program A.")
 
             crm_count_raw = _field_text(form, "crm_count")
             try:
@@ -201,17 +214,31 @@ class handler(BaseHTTPRequestHandler):
                 if not crm_files:
                     raise ValueError("Please upload at least one CRM file.")
 
-                output_filename = _output_filename(_field_text(form, "output_file"))
-                output_path = tmp_path / output_filename
-                build_output(
-                    powerbi_report=powerbi_path,
-                    crm_files=crm_files,
-                    platforms=platforms,
-                    pivot_name=pivot_name,
-                    output_file=output_path,
-                    powerbi_sheet=_optional_text(form, "powerbi_sheet"),
-                    crm_sheet=_optional_text(form, "crm_sheet"),
+                default_output = (
+                    PROGRAM_B_OUTPUT_FILENAME
+                    if program == PROGRAM_B
+                    else PROGRAM_A_OUTPUT_FILENAME
                 )
+                output_filename = _output_filename(
+                    _field_text(form, "output_file"),
+                    default_output,
+                )
+                output_path = tmp_path / output_filename
+                common_args = {
+                    "powerbi_report": powerbi_path,
+                    "crm_files": crm_files,
+                    "platforms": platforms,
+                    "output_file": output_path,
+                    "powerbi_sheet": _optional_text(form, "powerbi_sheet"),
+                    "crm_sheet": _optional_text(form, "crm_sheet"),
+                }
+                if program == PROGRAM_B:
+                    program_b_country_report.build_output(**common_args)
+                else:
+                    program_a_report.build_output(
+                        **common_args,
+                        pivot_name=pivot_name,
+                    )
                 workbook_bytes = output_path.read_bytes()
 
         except Exception as exc:

@@ -1,18 +1,26 @@
 # CRM Reporting Dashboard
 
-Interactive web GUI for generating the CRM + PowerBI Excel report.
+Interactive web GUI for generating CRM + PowerBI Excel reports.
 
 ## What it does
 
-The web app keeps the same options as the original command-line script:
+The web app lets you choose between two separate report programs:
+
+- **Program A - CRM Output Report**: the original deployed CRM output workbook
+  with combined data and pivots.
+- **Program B - Country Split Report**: a Main Report sheet plus one sheet per
+  Country, with formula-linked country rows and centered pivots.
+
+Both programs use the same uploaded inputs:
 
 - PowerBI report file upload
 - Optional PowerBI sheet name
-- Pivot table name
+- Pivot table name for Program A
 - Up to four CRM file uploads in fixed browse rows
 - Platform name beside each uploaded CRM file
 - Optional CRM sheet name shared by all CRM files
-- Optional output filename
+- Optional output filename. Program A defaults to `crm_powerbi_output.xlsx`;
+  Program B defaults to `crm_country_report.xlsx`.
 
 After submission, the Python serverless function generates the enriched `.xlsx`
 workbook and returns it as a browser download.
@@ -28,7 +36,8 @@ python3 -m pip install -r requirements.txt
 Run the CLI version:
 
 ```bash
-python3 report_generator.py
+python3 program_a_report.py
+python3 program_b_country_report.py
 ```
 
 For the Vercel-style web app, install the Vercel CLI and run:
