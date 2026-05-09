@@ -9,8 +9,8 @@ The web app keeps the same options as the original command-line script:
 - PowerBI report file upload
 - Optional PowerBI sheet name
 - Pivot table name
-- One or more CRM file uploads
-- Platform name for each CRM file
+- Up to four CRM file uploads in fixed browse rows
+- Platform name beside each uploaded CRM file
 - Optional CRM sheet name shared by all CRM files
 - Optional output filename
 

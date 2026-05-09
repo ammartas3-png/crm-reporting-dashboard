@@ -21,11 +21,11 @@
         <fieldset>
           <legend>PowerBI report</legend>
           <label>
-            PowerBI report file
+            Browse PowerBI .xlsx file
             <input
               type="file"
               name="powerbi_report"
-              accept=".xlsx,.xlsm,.xltx,.xltm"
+              accept=".xlsx"
               required
             />
           </label>
@@ -60,16 +60,104 @@
         <fieldset>
           <legend>CRM files</legend>
           <p class="section-note">
-            Add one row per CRM file, then enter the matching platform name for
-            that file.
+            Use up to four CRM files. For every CRM file you upload, enter the
+            platform name in the field directly beside it.
           </p>
 
-          <input id="crm-count" type="hidden" name="crm_count" value="1" />
-          <div id="crm-list" class="crm-list"></div>
+          <input type="hidden" name="crm_count" value="4" />
+          <div class="crm-list">
+            <div class="crm-row">
+              <label>
+                Browse CRM .xlsx file #1
+                <input
+                  class="crm-file-input"
+                  type="file"
+                  name="crm_file_0"
+                  accept=".xlsx"
+                />
+              </label>
 
-          <button id="add-crm" class="secondary" type="button">
-            Add another CRM file
-          </button>
+              <label>
+                Platform name for CRM file #1
+                <input
+                  class="platform-input"
+                  type="text"
+                  name="platform_0"
+                  autocomplete="off"
+                  placeholder="Example: BrandName"
+                />
+              </label>
+            </div>
+
+            <div class="crm-row">
+              <label>
+                Browse CRM .xlsx file #2
+                <input
+                  class="crm-file-input"
+                  type="file"
+                  name="crm_file_1"
+                  accept=".xlsx"
+                />
+              </label>
+
+              <label>
+                Platform name for CRM file #2
+                <input
+                  class="platform-input"
+                  type="text"
+                  name="platform_1"
+                  autocomplete="off"
+                  placeholder="Example: BrandName"
+                />
+              </label>
+            </div>
+
+            <div class="crm-row">
+              <label>
+                Browse CRM .xlsx file #3
+                <input
+                  class="crm-file-input"
+                  type="file"
+                  name="crm_file_2"
+                  accept=".xlsx"
+                />
+              </label>
+
+              <label>
+                Platform name for CRM file #3
+                <input
+                  class="platform-input"
+                  type="text"
+                  name="platform_2"
+                  autocomplete="off"
+                  placeholder="Example: BrandName"
+                />
+              </label>
+            </div>
+
+            <div class="crm-row">
+              <label>
+                Browse CRM .xlsx file #4
+                <input
+                  class="crm-file-input"
+                  type="file"
+                  name="crm_file_3"
+                  accept=".xlsx"
+                />
+              </label>
+
+              <label>
+                Platform name for CRM file #4
+                <input
+                  class="platform-input"
+                  type="text"
+                  name="platform_3"
+                  autocomplete="off"
+                  placeholder="Example: BrandName"
+                />
+              </label>
+            </div>
+          </div>
         </fieldset>
 
         <fieldset>
@@ -126,39 +214,9 @@
       </section>
     </main>
 
-    <template id="crm-row-template">
-      <div class="crm-row">
-        <label>
-          <span class="crm-file-label">CRM file #1</span>
-          <input
-            class="crm-file-input"
-            type="file"
-            accept=".xlsx,.xlsm,.xltx,.xltm"
-            required
-          />
-        </label>
-
-        <label>
-          <span class="platform-label">Platform name for CRM file #1</span>
-          <input
-            class="platform-input"
-            type="text"
-            autocomplete="off"
-            placeholder="Example: BrandName"
-            required
-          />
-        </label>
-
-        <button class="remove-crm danger" type="button">Remove</button>
-      </div>
-    </template>
-
     <script>
       const form = document.querySelector("#report-form");
-      const crmList = document.querySelector("#crm-list");
-      const crmCount = document.querySelector("#crm-count");
-      const template = document.querySelector("#crm-row-template");
-      const addCrmButton = document.querySelector("#add-crm");
+      const crmRows = [...document.querySelectorAll(".crm-row")];
       const submitButton = document.querySelector("#submit-button");
       const statusEl = document.querySelector("#status");
 
@@ -167,30 +225,40 @@
         statusEl.className = type;
       }
 
-      function reindexCrmRows() {
-        const rows = [...crmList.querySelectorAll(".crm-row")];
-        rows.forEach((row, index) => {
-          const displayIndex = index + 1;
-          row.querySelector(".crm-file-label").textContent =
-            `CRM file #${displayIndex}`;
-          row.querySelector(".platform-label").textContent =
-            `Platform name for CRM file #${displayIndex}`;
-          row.querySelector(".crm-file-input").name = `crm_file_${index}`;
-          row.querySelector(".platform-input").name = `platform_${index}`;
-          row.querySelector(".remove-crm").disabled = rows.length === 1;
-        });
-        crmCount.value = String(rows.length);
-      }
+      function validateCrmRows() {
+        let uploadedCount = 0;
 
-      function addCrmRow() {
-        const fragment = template.content.cloneNode(true);
-        const row = fragment.querySelector(".crm-row");
-        row.querySelector(".remove-crm").addEventListener("click", () => {
-          row.remove();
-          reindexCrmRows();
+        crmRows.forEach((row) => {
+          const fileInput = row.querySelector(".crm-file-input");
+          const platformInput = row.querySelector(".platform-input");
+          const hasFile = fileInput.files.length > 0;
+          const hasPlatform = platformInput.value.trim().length > 0;
+
+          fileInput.setCustomValidity("");
+          platformInput.setCustomValidity("");
+
+          if (hasFile) {
+            uploadedCount += 1;
+          }
+
+          if (hasFile && !hasPlatform) {
+            platformInput.setCustomValidity(
+              "Enter the platform name for this CRM file.",
+            );
+          }
+
+          if (!hasFile && hasPlatform) {
+            fileInput.setCustomValidity(
+              "Browse and select the CRM .xlsx file for this platform.",
+            );
+          }
         });
-        crmList.appendChild(fragment);
-        reindexCrmRows();
+
+        if (uploadedCount === 0) {
+          crmRows[0]
+            .querySelector(".crm-file-input")
+            .setCustomValidity("Browse and select at least one CRM .xlsx file.");
+        }
       }
 
       function filenameFromDisposition(disposition) {
@@ -198,18 +266,20 @@
         return match ? match[1] : "crm_powerbi_output.xlsx";
       }
 
-      addCrmButton.addEventListener("click", addCrmRow);
+      crmRows.forEach((row) => {
+        row.querySelector(".crm-file-input").addEventListener("change", validateCrmRows);
+        row.querySelector(".platform-input").addEventListener("input", validateCrmRows);
+      });
 
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
-        reindexCrmRows();
+        validateCrmRows();
 
         if (!form.reportValidity()) {
           return;
         }
 
         submitButton.disabled = true;
-        addCrmButton.disabled = true;
         setStatus("Uploading files and generating workbook...", "pending");
 
         try {
@@ -248,12 +318,9 @@
           setStatus(error.message, "error");
         } finally {
           submitButton.disabled = false;
-          addCrmButton.disabled = false;
-          reindexCrmRows();
+          validateCrmRows();
         }
       });
-
-      addCrmRow();
     </script>
   </body>
 </html>

@@ -154,7 +154,7 @@ input:focus {
   border-radius: 16px;
   display: grid;
   gap: 14px;
-  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
   padding: 16px;
 }
 

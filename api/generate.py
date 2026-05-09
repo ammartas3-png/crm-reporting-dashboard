@@ -82,6 +82,10 @@ def _save_upload(
     return path
 
 
+def _has_upload(field: cgi.FieldStorage | None) -> bool:
+    return bool(field is not None and field.filename)
+
+
 def _parse_form(handler: BaseHTTPRequestHandler) -> cgi.FieldStorage:
     content_type = handler.headers.get("content-type", "")
     if not content_type.lower().startswith("multipart/form-data"):
@@ -145,18 +149,29 @@ class handler(BaseHTTPRequestHandler):
                 crm_files: list[Path] = []
                 platforms: list[str] = []
                 for index in range(crm_count):
-                    crm_path = _save_upload(
-                        _field(form, f"crm_file_{index}"),
-                        tmp_path,
-                        f"CRM file #{index + 1}",
-                    )
+                    crm_field = _field(form, f"crm_file_{index}")
                     platform = _field_text(form, f"platform_{index}")
+                    has_upload = _has_upload(crm_field)
+                    if not has_upload and not platform:
+                        continue
+                    if not has_upload:
+                        raise ValueError(
+                            f"Please upload CRM file #{index + 1}."
+                        )
                     if not platform:
                         raise ValueError(
                             f"Platform name for CRM file #{index + 1} is required."
                         )
+                    crm_path = _save_upload(
+                        crm_field,
+                        tmp_path,
+                        f"CRM file #{index + 1}",
+                    )
                     crm_files.append(crm_path)
                     platforms.append(platform)
+
+                if not crm_files:
+                    raise ValueError("Please upload at least one CRM file.")
 
                 output_filename = _output_filename(_field_text(form, "output_file"))
                 output_path = tmp_path / output_filename
