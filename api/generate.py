@@ -24,6 +24,10 @@ DEFAULT_OUTPUT_FILENAME = "crm_powerbi_output.xlsx"
 MAX_UPLOAD_BYTES = 45 * 1024 * 1024
 
 
+def _read_static_file(filename: str) -> bytes:
+    return (PROJECT_ROOT / filename).read_bytes()
+
+
 def _json_bytes(payload: dict[str, Any]) -> bytes:
     return json.dumps(payload).encode("utf-8")
 
@@ -115,6 +119,30 @@ def _parse_form(handler: BaseHTTPRequestHandler) -> cgi.FieldStorage:
 
 
 class handler(BaseHTTPRequestHandler):
+    def _send_static_file(self, filename: str, content_type: str) -> None:
+        try:
+            content = _read_static_file(filename)
+        except FileNotFoundError:
+            self.send_error(404, "File not found")
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(content)))
+        self.end_headers()
+        self.wfile.write(content)
+
+    def do_GET(self) -> None:
+        if self.path in {"/", "/index.html"}:
+            self._send_static_file("index.html", "text/html; charset=utf-8")
+            return
+
+        if self.path == "/styles.css":
+            self._send_static_file("styles.css", "text/css; charset=utf-8")
+            return
+
+        self.send_error(404, "Not found")
+
     def do_OPTIONS(self) -> None:
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
