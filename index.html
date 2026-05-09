@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CRM + PowerBI Merge Tool</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">Report generator</p>
+        <h1>CRM + PowerBI Merge Tool</h1>
+        <p>
+          Upload the same files and settings the command-line script asks for.
+          The app generates the enriched Excel workbook in the browser.
+        </p>
+      </section>
+
+      <form id="report-form" class="card">
+        <fieldset>
+          <legend>PowerBI report</legend>
+          <label>
+            PowerBI report file
+            <input
+              type="file"
+              name="powerbi_report"
+              accept=".xlsx,.xlsm,.xltx,.xltm"
+              required
+            />
+          </label>
+
+          <label>
+            Sheet name
+            <span class="hint">Leave blank to use the active sheet.</span>
+            <input
+              type="text"
+              name="powerbi_sheet"
+              autocomplete="off"
+              placeholder="Example: Sheet1"
+            />
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Pivot</legend>
+          <label>
+            Pivot table name
+            <span class="hint">Used as the label on the status pivot.</span>
+            <input
+              type="text"
+              name="pivot_name"
+              autocomplete="off"
+              placeholder="Example: Today's Lead Report"
+              required
+            />
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>CRM files</legend>
+          <p class="section-note">
+            Add one row per CRM file, then enter the matching platform name for
+            that file.
+          </p>
+
+          <input id="crm-count" type="hidden" name="crm_count" value="1" />
+          <div id="crm-list" class="crm-list"></div>
+
+          <button id="add-crm" class="secondary" type="button">
+            Add another CRM file
+          </button>
+        </fieldset>
+
+        <fieldset>
+          <legend>Output settings</legend>
+          <label>
+            CRM sheet name for all CRM files
+            <span class="hint">Leave blank to use each file's active sheet.</span>
+            <input
+              type="text"
+              name="crm_sheet"
+              autocomplete="off"
+              placeholder="Example: Export"
+            />
+          </label>
+
+          <label>
+            Output file path / filename
+            <span class="hint">
+              Leave blank for crm_powerbi_output.xlsx. In the web app this is
+              used as the downloaded filename.
+            </span>
+            <input
+              type="text"
+              name="output_file"
+              autocomplete="off"
+              placeholder="crm_powerbi_output.xlsx"
+            />
+          </label>
+        </fieldset>
+
+        <div class="actions">
+          <button id="submit-button" type="submit">Generate workbook</button>
+          <p id="status" role="status" aria-live="polite"></p>
+        </div>
+      </form>
+
+      <section class="card compact">
+        <h2>Required spreadsheet columns</h2>
+        <div class="columns-grid">
+          <div>
+            <h3>CRM files</h3>
+            <p>
+              Customer Type, ID, Created, Name, Department, Status, Country,
+              Campaign, Sub-Campaign, Placement, Assigned to
+            </p>
+          </div>
+          <div>
+            <h3>PowerBI report</h3>
+            <p>
+              Account No, Brand, Last 10 Comments, Voip Calls Attempts Cnt
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <template id="crm-row-template">
+      <div class="crm-row">
+        <label>
+          <span class="crm-file-label">CRM file #1</span>
+          <input
+            class="crm-file-input"
+            type="file"
+            accept=".xlsx,.xlsm,.xltx,.xltm"
+            required
+          />
+        </label>
+
+        <label>
+          <span class="platform-label">Platform name for CRM file #1</span>
+          <input
+            class="platform-input"
+            type="text"
+            autocomplete="off"
+            placeholder="Example: BrandName"
+            required
+          />
+        </label>
+
+        <button class="remove-crm danger" type="button">Remove</button>
+      </div>
+    </template>
+
+    <script>
+      const form = document.querySelector("#report-form");
+      const crmList = document.querySelector("#crm-list");
+      const crmCount = document.querySelector("#crm-count");
+      const template = document.querySelector("#crm-row-template");
+      const addCrmButton = document.querySelector("#add-crm");
+      const submitButton = document.querySelector("#submit-button");
+      const statusEl = document.querySelector("#status");
+
+      function setStatus(message, type = "") {
+        statusEl.textContent = message;
+        statusEl.className = type;
+      }
+
+      function reindexCrmRows() {
+        const rows = [...crmList.querySelectorAll(".crm-row")];
+        rows.forEach((row, index) => {
+          const displayIndex = index + 1;
+          row.querySelector(".crm-file-label").textContent =
+            `CRM file #${displayIndex}`;
+          row.querySelector(".platform-label").textContent =
+            `Platform name for CRM file #${displayIndex}`;
+          row.querySelector(".crm-file-input").name = `crm_file_${index}`;
+          row.querySelector(".platform-input").name = `platform_${index}`;
+          row.querySelector(".remove-crm").disabled = rows.length === 1;
+        });
+        crmCount.value = String(rows.length);
+      }
+
+      function addCrmRow() {
+        const fragment = template.content.cloneNode(true);
+        const row = fragment.querySelector(".crm-row");
+        row.querySelector(".remove-crm").addEventListener("click", () => {
+          row.remove();
+          reindexCrmRows();
+        });
+        crmList.appendChild(fragment);
+        reindexCrmRows();
+      }
+
+      function filenameFromDisposition(disposition) {
+        const match = /filename="?([^";]+)"?/i.exec(disposition || "");
+        return match ? match[1] : "crm_powerbi_output.xlsx";
+      }
+
+      addCrmButton.addEventListener("click", addCrmRow);
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        reindexCrmRows();
+
+        if (!form.reportValidity()) {
+          return;
+        }
+
+        submitButton.disabled = true;
+        addCrmButton.disabled = true;
+        setStatus("Uploading files and generating workbook...", "pending");
+
+        try {
+          const response = await fetch("/api/generate", {
+            method: "POST",
+            body: new FormData(form),
+          });
+
+          if (!response.ok) {
+            let message = "Unable to generate the workbook.";
+            try {
+              const payload = await response.json();
+              if (payload.error) {
+                message = payload.error;
+              }
+            } catch {
+              message = await response.text();
+            }
+            throw new Error(message);
+          }
+
+          const blob = await response.blob();
+          const filename = filenameFromDisposition(
+            response.headers.get("content-disposition"),
+          );
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(url);
+          setStatus("Done. Your workbook download has started.", "success");
+        } catch (error) {
+          setStatus(error.message, "error");
+        } finally {
+          submitButton.disabled = false;
+          addCrmButton.disabled = false;
+          reindexCrmRows();
+        }
+      });
+
+      addCrmRow();
+    </script>
+  </body>
+</html>
