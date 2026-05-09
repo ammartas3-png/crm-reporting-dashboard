@@ -6,6 +6,7 @@ from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
 
+import program_b_country_report
 from report_generator import (
     CRM_COLUMNS,
     OUTPUT_COLUMNS,
@@ -106,6 +107,81 @@ class ReportGeneratorTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "bad_powerbi.xlsx is missing required columns"):
                 read_powerbi_lookup(path)
+
+
+class ProgramBCountryReportTests(unittest.TestCase):
+    def test_build_output_creates_main_and_country_sheets(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            powerbi = root / "powerbi.xlsx"
+            crm = root / "crm.xlsx"
+            output = root / "country_output.xlsx"
+
+            _write_workbook(
+                powerbi,
+                POWERBI_COLUMNS,
+                [
+                    [123, "BrandA", "| NA ; | VM ;", 0],
+                    [456, "BrandA", "| L1 interested ;", 5],
+                ],
+            )
+            _write_workbook(
+                crm,
+                CRM_COLUMNS,
+                [
+                    [
+                        "Lead",
+                        123,
+                        "2026-05-09",
+                        "Jane Doe",
+                        "Sales",
+                        "Potential",
+                        "TR",
+                        "Campaign A",
+                        "Sub A",
+                        "Placement A",
+                        "Agent 1",
+                    ],
+                    [
+                        "Lead",
+                        456,
+                        "2026-05-09",
+                        "Max Doe",
+                        "Sales",
+                        "Call Again",
+                        "DE",
+                        "Campaign B",
+                        "Sub B",
+                        "Placement B",
+                        "Agent 2",
+                    ],
+                ],
+            )
+
+            program_b_country_report.build_output(
+                powerbi_report=powerbi,
+                crm_files=[crm],
+                platforms=["BrandA"],
+                output_file=output,
+            )
+
+            workbook = load_workbook(output, data_only=False)
+            self.assertIn("Main Report", workbook.sheetnames)
+            self.assertIn("DE", workbook.sheetnames)
+            self.assertIn("TR", workbook.sheetnames)
+
+            main = workbook["Main Report"]
+            headers = [cell.value for cell in main[1]]
+            self.assertEqual(headers, OUTPUT_COLUMNS)
+
+            attempts_col = OUTPUT_COLUMNS.index("Call Attempts") + 1
+            self.assertEqual(main.cell(3, attempts_col).value, 1)
+            self.assertEqual(main.cell(2, attempts_col).value, 5)
+
+            de_sheet = workbook["DE"]
+            self.assertEqual([cell.value for cell in de_sheet[1]], OUTPUT_COLUMNS)
+            self.assertTrue(str(de_sheet.cell(2, 1).value).startswith("=IFERROR("))
+            self.assertEqual(de_sheet.cell(5, 6).value, "DE")
 
 
 if __name__ == "__main__":

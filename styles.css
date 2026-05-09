@@ -118,6 +118,43 @@ label:last-child {
   line-height: 1.45;
 }
 
+.program-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.program-card {
+  align-items: flex-start;
+  background: #f8faff;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  cursor: pointer;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto 1fr;
+  margin: 0;
+  padding: 18px;
+}
+
+.program-card:has(input:checked) {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 4px rgba(34, 81, 209, 0.12);
+}
+
+.program-card input {
+  margin-top: 3px;
+}
+
+.program-card small {
+  color: var(--muted);
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 500;
+  line-height: 1.45;
+  margin-top: 6px;
+}
+
 input[type="text"],
 input[type="file"] {
   background: #fff;
@@ -258,6 +295,7 @@ button.danger:hover:not(:disabled) {
   }
 
   .crm-row,
+  .program-grid,
   .columns-grid {
     grid-template-columns: 1fr;
   }
