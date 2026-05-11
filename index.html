@@ -333,6 +333,22 @@
           : programConfig[selectedProgram()].fallbackDownload;
       }
 
+      async function errorMessageFromResponse(response) {
+        const fallback = "Unable to generate the workbook.";
+        const body = await response.text();
+
+        if (!body) {
+          return fallback;
+        }
+
+        try {
+          const payload = JSON.parse(body);
+          return payload.error || fallback;
+        } catch {
+          return body;
+        }
+      }
+
       programInputs.forEach((input) => {
         input.addEventListener("change", syncProgramFields);
       });
@@ -360,16 +376,7 @@
           });
 
           if (!response.ok) {
-            let message = "Unable to generate the workbook.";
-            try {
-              const payload = await response.json();
-              if (payload.error) {
-                message = payload.error;
-              }
-            } catch {
-              message = await response.text();
-            }
-            throw new Error(message);
+            throw new Error(await errorMessageFromResponse(response));
           }
 
           const blob = await response.blob();
