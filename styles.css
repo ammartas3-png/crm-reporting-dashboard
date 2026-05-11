@@ -68,6 +68,35 @@ h1 {
   max-width: 760px;
 }
 
+.dashboard-alerts {
+  display: grid;
+  gap: 12px;
+  margin-top: 20px;
+  max-width: 900px;
+}
+
+.dashboard-alert {
+  border-radius: 16px;
+  font-size: 0.98rem;
+  font-weight: 800;
+  line-height: 1.5;
+  margin: 0;
+  padding: 14px 16px;
+}
+
+.info-alert {
+  background: #e9eefb;
+  border: 1px solid #b8c8ff;
+  color: var(--primary-dark);
+}
+
+.warning-alert,
+.submit-warning {
+  background: #fff0e8;
+  border: 1px solid #ffbd9b;
+  color: #8a3412;
+}
+
 .card {
   background: var(--card);
   border: 1px solid var(--border);
@@ -138,6 +167,30 @@ label:last-child {
   display: block;
   font-weight: 800;
   padding: 10px 12px;
+}
+
+.submit-warning {
+  border-radius: 18px;
+  font-size: 0.96rem;
+  font-weight: 700;
+  line-height: 1.5;
+  margin-top: 24px;
+  padding: 18px 20px;
+}
+
+.submit-warning strong {
+  display: block;
+  font-size: 1.05rem;
+  margin-bottom: 8px;
+}
+
+.submit-warning ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.submit-warning li + li {
+  margin-top: 6px;
 }
 
 .program-grid {

@@ -15,6 +15,17 @@
           Choose Report Generator or Bulk Country Reports, upload the required
           Excel files, and generate the selected enriched workbook in the browser.
         </p>
+        <div class="dashboard-alerts">
+          <p class="dashboard-alert info-alert">
+            This report only works with the 10 Last Comments exported file from
+            PowerBI.
+          </p>
+          <p class="dashboard-alert warning-alert">
+            Warning: Be careful about heavy reports done by the program. After
+            doing one, please check the report; the app may have some mistakes
+            on big files.
+          </p>
+        </div>
       </section>
 
       <form id="report-form" class="card">
@@ -113,6 +124,23 @@
             />
           </label>
         </fieldset>
+
+        <div class="submit-warning">
+          <strong>Please read the whole report carefully.</strong>
+          <ul>
+            <li>
+              Pay attention: some comments are colored yellow, which means they
+              do not exist on PowerBI, so they have to be put manually.
+            </li>
+            <li>
+              Real Call Back statuses and Telemarketing KYCs should be done
+              manually.
+            </li>
+            <li>
+              Be careful to remove any secret password from the comments as well.
+            </li>
+          </ul>
+        </div>
 
         <div class="actions">
           <button id="submit-button" type="submit">Generate workbook</button>
