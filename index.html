@@ -81,120 +81,15 @@
         <fieldset>
           <legend>CRM files</legend>
           <p class="section-note">
-            Use up to four CRM files. For every CRM file you upload, enter the
-            platform name in the field directly beside it.
+            Start with one CRM file. Use the + button to add more CRM files when
+            you need reports for additional brands.
           </p>
 
-          <input type="hidden" name="crm_count" value="4" />
-          <div class="crm-list">
-            <div class="crm-row">
-              <label>
-                Browse CRM .xlsx file #1
-                <input
-                  class="crm-file-input"
-                  type="file"
-                  name="crm_file_0"
-                  accept=".xlsx"
-                />
-              </label>
-
-              <label>
-                Platform name for CRM file #1
-                <select class="platform-input" name="platform_0">
-                  <option value="">Select platform</option>
-                  <option value="Fintana">Fintana</option>
-                  <option value="Riverquode">Riverquode</option>
-                  <option value="Mirrox">Mirrox</option>
-                  <option value="Savexa">Savexa</option>
-                  <option value="Spova">Spova</option>
-                  <option value="Modmount">Modmount</option>
-                  <option value="Skadeva">Skadeva</option>
-                  <option value="Fxnovus">Fxnovus</option>
-                </select>
-              </label>
-            </div>
-
-            <div class="crm-row">
-              <label>
-                Browse CRM .xlsx file #2
-                <input
-                  class="crm-file-input"
-                  type="file"
-                  name="crm_file_1"
-                  accept=".xlsx"
-                />
-              </label>
-
-              <label>
-                Platform name for CRM file #2
-                <select class="platform-input" name="platform_1">
-                  <option value="">Select platform</option>
-                  <option value="Fintana">Fintana</option>
-                  <option value="Riverquode">Riverquode</option>
-                  <option value="Mirrox">Mirrox</option>
-                  <option value="Savexa">Savexa</option>
-                  <option value="Spova">Spova</option>
-                  <option value="Modmount">Modmount</option>
-                  <option value="Skadeva">Skadeva</option>
-                  <option value="Fxnovus">Fxnovus</option>
-                </select>
-              </label>
-            </div>
-
-            <div class="crm-row">
-              <label>
-                Browse CRM .xlsx file #3
-                <input
-                  class="crm-file-input"
-                  type="file"
-                  name="crm_file_2"
-                  accept=".xlsx"
-                />
-              </label>
-
-              <label>
-                Platform name for CRM file #3
-                <select class="platform-input" name="platform_2">
-                  <option value="">Select platform</option>
-                  <option value="Fintana">Fintana</option>
-                  <option value="Riverquode">Riverquode</option>
-                  <option value="Mirrox">Mirrox</option>
-                  <option value="Savexa">Savexa</option>
-                  <option value="Spova">Spova</option>
-                  <option value="Modmount">Modmount</option>
-                  <option value="Skadeva">Skadeva</option>
-                  <option value="Fxnovus">Fxnovus</option>
-                </select>
-              </label>
-            </div>
-
-            <div class="crm-row">
-              <label>
-                Browse CRM .xlsx file #4
-                <input
-                  class="crm-file-input"
-                  type="file"
-                  name="crm_file_3"
-                  accept=".xlsx"
-                />
-              </label>
-
-              <label>
-                Platform name for CRM file #4
-                <select class="platform-input" name="platform_3">
-                  <option value="">Select platform</option>
-                  <option value="Fintana">Fintana</option>
-                  <option value="Riverquode">Riverquode</option>
-                  <option value="Mirrox">Mirrox</option>
-                  <option value="Savexa">Savexa</option>
-                  <option value="Spova">Spova</option>
-                  <option value="Modmount">Modmount</option>
-                  <option value="Skadeva">Skadeva</option>
-                  <option value="Fxnovus">Fxnovus</option>
-                </select>
-              </label>
-            </div>
-          </div>
+          <input id="crm-count" type="hidden" name="crm_count" value="1" />
+          <div id="crm-list" class="crm-list"></div>
+          <button id="add-crm-file" class="secondary add-crm-file" type="button">
+            + Add CRM file
+          </button>
         </fieldset>
 
         <fieldset>
@@ -221,6 +116,32 @@
         </div>
       </form>
 
+      <template id="crm-row-template">
+        <div class="crm-row">
+          <label>
+            <span class="crm-file-label">Browse CRM .xlsx file #1</span>
+            <input class="crm-file-input" type="file" accept=".xlsx" />
+          </label>
+
+          <label>
+            <span class="platform-label">Platform name for CRM file #1</span>
+            <select class="platform-input">
+              <option value="">Select platform</option>
+              <option value="Fintana">Fintana</option>
+              <option value="Riverquode">Riverquode</option>
+              <option value="Mirrox">Mirrox</option>
+              <option value="Savexa">Savexa</option>
+              <option value="Spova">Spova</option>
+              <option value="Modmount">Modmount</option>
+              <option value="Skadeva">Skadeva</option>
+              <option value="Fxnovus">Fxnovus</option>
+            </select>
+          </label>
+
+          <button class="remove-crm-file danger" type="button">Remove</button>
+        </div>
+      </template>
+
       <section class="card compact">
         <h2>Required spreadsheet columns</h2>
         <div class="columns-grid">
@@ -243,7 +164,10 @@
 
     <script>
       const form = document.querySelector("#report-form");
-      const crmRows = [...document.querySelectorAll(".crm-row")];
+      const crmList = document.querySelector("#crm-list");
+      const crmCount = document.querySelector("#crm-count");
+      const crmRowTemplate = document.querySelector("#crm-row-template");
+      const addCrmFileButton = document.querySelector("#add-crm-file");
       const programInputs = [...document.querySelectorAll('input[name="program"]')];
       const submitButton = document.querySelector("#submit-button");
       const statusEl = document.querySelector("#status");
@@ -290,10 +214,50 @@
         outputHint.textContent = config.outputHint;
       }
 
+      function crmRows() {
+        return [...crmList.querySelectorAll(".crm-row")];
+      }
+
+      function updateCrmRowIndexes() {
+        const rows = crmRows();
+
+        rows.forEach((row, index) => {
+          const displayIndex = index + 1;
+          row.querySelector(".crm-file-label").textContent =
+            `Browse CRM .xlsx file #${displayIndex}`;
+          row.querySelector(".platform-label").textContent =
+            `Platform name for CRM file #${displayIndex}`;
+          row.querySelector(".crm-file-input").name = `crm_file_${index}`;
+          row.querySelector(".platform-input").name = `platform_${index}`;
+
+          const removeButton = row.querySelector(".remove-crm-file");
+          removeButton.hidden = rows.length === 1;
+          removeButton.disabled = rows.length === 1;
+        });
+
+        crmCount.value = String(rows.length);
+      }
+
+      function addCrmRow() {
+        const fragment = crmRowTemplate.content.cloneNode(true);
+        const row = fragment.querySelector(".crm-row");
+        row.querySelector(".crm-file-input").addEventListener("change", validateCrmRows);
+        row.querySelector(".platform-input").addEventListener("change", validateCrmRows);
+        row.querySelector(".remove-crm-file").addEventListener("click", () => {
+          row.remove();
+          updateCrmRowIndexes();
+          validateCrmRows();
+        });
+        crmList.appendChild(fragment);
+        updateCrmRowIndexes();
+        validateCrmRows();
+      }
+
       function validateCrmRows() {
         let uploadedCount = 0;
+        const rows = crmRows();
 
-        crmRows.forEach((row) => {
+        rows.forEach((row) => {
           const fileInput = row.querySelector(".crm-file-input");
           const platformInput = row.querySelector(".platform-input");
           const hasFile = fileInput.files.length > 0;
@@ -320,7 +284,7 @@
         });
 
         if (uploadedCount === 0) {
-          crmRows[0]
+          rows[0]
             .querySelector(".crm-file-input")
             .setCustomValidity("Browse and select at least one CRM .xlsx file.");
         }
@@ -337,14 +301,12 @@
         input.addEventListener("change", syncProgramFields);
       });
 
-      crmRows.forEach((row) => {
-        row.querySelector(".crm-file-input").addEventListener("change", validateCrmRows);
-        row.querySelector(".platform-input").addEventListener("change", validateCrmRows);
-      });
+      addCrmFileButton.addEventListener("click", addCrmRow);
 
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         syncProgramFields();
+        updateCrmRowIndexes();
         validateCrmRows();
 
         if (!form.reportValidity()) {
@@ -352,6 +314,7 @@
         }
 
         submitButton.disabled = true;
+        addCrmFileButton.disabled = true;
         setStatus("Uploading files and generating workbook...", "pending");
 
         try {
@@ -390,11 +353,13 @@
           setStatus(error.message, "error");
         } finally {
           submitButton.disabled = false;
+          addCrmFileButton.disabled = false;
           validateCrmRows();
         }
       });
 
       syncProgramFields();
+      addCrmRow();
     </script>
   </body>
 </html>

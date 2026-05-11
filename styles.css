@@ -193,12 +193,16 @@ input:focus {
   border-radius: 16px;
   display: grid;
   gap: 14px;
-  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) auto;
   padding: 16px;
 }
 
 .crm-row label {
   margin-bottom: 0;
+}
+
+.add-crm-file {
+  margin-top: 2px;
 }
 
 button {
