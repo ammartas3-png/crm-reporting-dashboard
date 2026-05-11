@@ -31,6 +31,7 @@ from report_generator import (
     NO_COMMENT_STATUSES,
     OUTPUT_COLUMNS,
     POWERBI_COLUMNS,
+    STATUS_LIST,
     STATUS_COLORS,
     comments_for_status,
     extract_comments,
@@ -369,15 +370,8 @@ def _write_pivot_status(
     main_pivot_status_col_letter: str | None = None,
     main_pivot_status_row_map: dict[str, int] | None = None,
 ) -> tuple[int, dict[str, int]]:
-    seen_lower: set[str] = set()
-    ordered_statuses: list[str] = []
-    for row in rows:
-        status = str(row.get("Status", "") or "").strip()
-        status_key = status.lower()
-        if status and status_key not in seen_lower:
-            seen_lower.add(status_key)
-            ordered_statuses.append(status)
-    ordered_statuses.sort(key=str.lower)
+    del rows
+    ordered_statuses = STATUS_LIST
 
     label_col = start_col
     status_col = start_col + 1

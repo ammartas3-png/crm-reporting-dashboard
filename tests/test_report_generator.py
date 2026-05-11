@@ -11,6 +11,7 @@ from report_generator import (
     CRM_COLUMNS,
     OUTPUT_COLUMNS,
     POWERBI_COLUMNS,
+    STATUS_LIST,
     build_output,
     read_powerbi_lookup,
 )
@@ -178,10 +179,29 @@ class ProgramBCountryReportTests(unittest.TestCase):
             self.assertEqual(main.cell(3, attempts_col).value, 1)
             self.assertEqual(main.cell(2, attempts_col).value, 5)
 
+            status_pivot_start_row = 6
+            status_pivot_status_col = 7
+            status_pivot_count_col = 8
+            status_pivot_pct_col = 9
+            pivot_statuses = [
+                main.cell(status_pivot_start_row + index, status_pivot_status_col).value
+                for index in range(len(STATUS_LIST))
+            ]
+            self.assertEqual(pivot_statuses, STATUS_LIST)
+            self.assertEqual(
+                main.cell(status_pivot_start_row + 1, status_pivot_count_col).value,
+                '=COUNTIF(\'Main Report\'!$G$2:$G$3,"Decline")',
+            )
+            self.assertEqual(
+                main.cell(status_pivot_start_row + 1, status_pivot_pct_col).value,
+                "=IFERROR(H7/H23,0)",
+            )
+
             de_sheet = workbook["DE"]
             self.assertEqual([cell.value for cell in de_sheet[1]], OUTPUT_COLUMNS)
             self.assertTrue(str(de_sheet.cell(2, 1).value).startswith("=IFERROR("))
             self.assertEqual(de_sheet.cell(5, 6).value, "DE")
+            self.assertEqual(de_sheet.cell(5, 7).value, "='Main Report'!$G$6")
 
 
 if __name__ == "__main__":
