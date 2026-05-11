@@ -26,6 +26,20 @@ def _write_workbook(path: Path, headers: list[str], rows: list[list[object]]) ->
     workbook.save(path)
 
 
+def _write_powerbi_with_third_row_headers(
+    path: Path,
+    rows: list[list[object]],
+) -> None:
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.append(["Applied filters: example"])
+    worksheet.append([])
+    worksheet.append(POWERBI_COLUMNS)
+    for row in rows:
+        worksheet.append(row)
+    workbook.save(path)
+
+
 class ReportGeneratorTests(unittest.TestCase):
     def test_build_output_merges_comments_and_call_attempts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -109,8 +123,34 @@ class ReportGeneratorTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "bad_powerbi.xlsx is missing required columns"):
                 read_powerbi_lookup(path)
 
+    def test_powerbi_headers_can_be_on_third_row(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "filtered_powerbi.xlsx"
+            _write_powerbi_with_third_row_headers(
+                path,
+                [[123, "BrandA", "| L1 reached ;", 2]],
+            )
+
+            lookup = read_powerbi_lookup(path)
+
+            self.assertEqual(lookup[("123", "branda")]["Call Attempts"], 2)
+            self.assertEqual(lookup[("123", "branda")]["Comments"], ["L1 reached"])
+
 
 class ProgramBCountryReportTests(unittest.TestCase):
+    def test_powerbi_headers_can_be_on_third_row(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "filtered_powerbi.xlsx"
+            _write_powerbi_with_third_row_headers(
+                path,
+                [[123, "BrandA", "| L1 reached ;", 0]],
+            )
+
+            lookup = program_b_country_report.read_powerbi_lookup(path)
+
+            self.assertEqual(lookup[("123", "branda")]["Call Attempts"], 1)
+            self.assertEqual(lookup[("123", "branda")]["Comments"], ["L1 reached"])
+
     def test_build_output_creates_main_and_country_sheets(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

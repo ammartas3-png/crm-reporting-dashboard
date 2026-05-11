@@ -259,19 +259,41 @@ def header_indexes(
     }
 
 
+def powerbi_header_indexes_and_rows(worksheet, path: Path):
+    """Return PowerBI column indexes and an iterator positioned after the header.
+
+    Most PowerBI exports have headers on row 1. Some exports include filter/info
+    rows first, with the actual table headers on row 3. Try row 1 first; when it
+    does not contain the required PowerBI columns, skip row 2 and try row 3.
+    """
+    rows = worksheet.iter_rows(values_only=True)
+
+    try:
+        first_row = next(rows)
+    except StopIteration as exc:
+        raise ValueError(f"{path.name} is empty") from exc
+
+    try:
+        return header_indexes(first_row, POWERBI_COLUMNS, path), rows
+    except ValueError as first_row_error:
+        try:
+            next(rows)
+            third_row = next(rows)
+        except StopIteration as exc:
+            raise first_row_error from exc
+
+        try:
+            return header_indexes(third_row, POWERBI_COLUMNS, path), rows
+        except ValueError as exc:
+            raise first_row_error from exc
+
+
 def read_powerbi_lookup(
     powerbi_report: Path,
     sheet_name: str | None = None,
 ) -> dict[tuple[str, str], dict[str, Any]]:
     worksheet = worksheet_from_file(powerbi_report, sheet_name)
-    rows = worksheet.iter_rows(values_only=True)
-
-    try:
-        headers = next(rows)
-    except StopIteration as exc:
-        raise ValueError(f"{powerbi_report.name} is empty") from exc
-
-    indexes = header_indexes(headers, POWERBI_COLUMNS, powerbi_report)
+    indexes, rows = powerbi_header_indexes_and_rows(worksheet, powerbi_report)
     lookup: dict[tuple[str, str], dict[str, Any]] = {}
 
     for row in rows:
