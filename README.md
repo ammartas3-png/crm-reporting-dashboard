@@ -15,7 +15,6 @@ The web app lets you choose between two separate report programs:
 Both programs use the same uploaded inputs:
 
 - PowerBI report file upload
-- Optional PowerBI sheet name
 - Pivot table name for Report Generator
 - Up to four CRM file uploads in fixed browse rows
 - Platform name beside each uploaded CRM file
