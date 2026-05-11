@@ -100,13 +100,17 @@
 
               <label>
                 Platform name for CRM file #1
-                <input
-                  class="platform-input"
-                  type="text"
-                  name="platform_0"
-                  autocomplete="off"
-                  placeholder="Example: BrandName"
-                />
+                <select class="platform-input" name="platform_0">
+                  <option value="">Select platform</option>
+                  <option value="Fintana">Fintana</option>
+                  <option value="Riverquode">Riverquode</option>
+                  <option value="Mirrox">Mirrox</option>
+                  <option value="Savexa">Savexa</option>
+                  <option value="Spova">Spova</option>
+                  <option value="Modmount">Modmount</option>
+                  <option value="Skadeva">Skadeva</option>
+                  <option value="Fxnovus">Fxnovus</option>
+                </select>
               </label>
             </div>
 
@@ -123,13 +127,17 @@
 
               <label>
                 Platform name for CRM file #2
-                <input
-                  class="platform-input"
-                  type="text"
-                  name="platform_1"
-                  autocomplete="off"
-                  placeholder="Example: BrandName"
-                />
+                <select class="platform-input" name="platform_1">
+                  <option value="">Select platform</option>
+                  <option value="Fintana">Fintana</option>
+                  <option value="Riverquode">Riverquode</option>
+                  <option value="Mirrox">Mirrox</option>
+                  <option value="Savexa">Savexa</option>
+                  <option value="Spova">Spova</option>
+                  <option value="Modmount">Modmount</option>
+                  <option value="Skadeva">Skadeva</option>
+                  <option value="Fxnovus">Fxnovus</option>
+                </select>
               </label>
             </div>
 
@@ -146,13 +154,17 @@
 
               <label>
                 Platform name for CRM file #3
-                <input
-                  class="platform-input"
-                  type="text"
-                  name="platform_2"
-                  autocomplete="off"
-                  placeholder="Example: BrandName"
-                />
+                <select class="platform-input" name="platform_2">
+                  <option value="">Select platform</option>
+                  <option value="Fintana">Fintana</option>
+                  <option value="Riverquode">Riverquode</option>
+                  <option value="Mirrox">Mirrox</option>
+                  <option value="Savexa">Savexa</option>
+                  <option value="Spova">Spova</option>
+                  <option value="Modmount">Modmount</option>
+                  <option value="Skadeva">Skadeva</option>
+                  <option value="Fxnovus">Fxnovus</option>
+                </select>
               </label>
             </div>
 
@@ -169,13 +181,17 @@
 
               <label>
                 Platform name for CRM file #4
-                <input
-                  class="platform-input"
-                  type="text"
-                  name="platform_3"
-                  autocomplete="off"
-                  placeholder="Example: BrandName"
-                />
+                <select class="platform-input" name="platform_3">
+                  <option value="">Select platform</option>
+                  <option value="Fintana">Fintana</option>
+                  <option value="Riverquode">Riverquode</option>
+                  <option value="Mirrox">Mirrox</option>
+                  <option value="Savexa">Savexa</option>
+                  <option value="Spova">Spova</option>
+                  <option value="Modmount">Modmount</option>
+                  <option value="Skadeva">Skadeva</option>
+                  <option value="Fxnovus">Fxnovus</option>
+                </select>
               </label>
             </div>
           </div>
@@ -334,7 +350,7 @@
 
       crmRows.forEach((row) => {
         row.querySelector(".crm-file-input").addEventListener("change", validateCrmRows);
-        row.querySelector(".platform-input").addEventListener("input", validateCrmRows);
+        row.querySelector(".platform-input").addEventListener("change", validateCrmRows);
       });
 
       form.addEventListener("submit", async (event) => {
