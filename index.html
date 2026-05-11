@@ -97,8 +97,7 @@
           </p>
           <p class="format-note">
             Note: only Excel .xlsx files are supported. Do not upload CSV, PDF,
-            images, or any other file format. Files are uploaded directly to
-            Vercel Blob before the report is generated.
+            images, or any other file format.
           </p>
 
           <input id="crm-count" type="hidden" name="crm_count" value="1" />
@@ -224,7 +223,7 @@
           pivotHint:
             "Choose the name of the Status pivot table included in the report sheet",
           outputHint:
-            "Leave blank for crm_powerbi_output.xlsx. In the web app this is used as the downloaded filename.",
+            "Choose a name for your file or leave the field blank for crm_powerbi_output.xlsx.",
         },
         program_b: {
           output: "crm_country_report.xlsx",
@@ -233,7 +232,7 @@
           pivotHint:
             "Bulk Country Reports uses fixed workbook labels: Main Report uses M-Inhousemedia and country sheets use country names.",
           outputHint:
-            "Leave blank for crm_country_report.xlsx. In the web app this is used as the downloaded filename.",
+            "Choose a name for your file or leave the field blank for crm_country_report.xlsx.",
         },
       };
 
