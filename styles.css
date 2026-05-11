@@ -130,6 +130,16 @@ label:last-child {
   padding: 12px 14px;
 }
 
+.important-hint {
+  background: #e9eefb;
+  border-left: 4px solid var(--primary);
+  border-radius: 10px;
+  color: var(--primary-dark);
+  display: block;
+  font-weight: 800;
+  padding: 10px 12px;
+}
+
 .program-grid {
   display: grid;
   gap: 14px;
