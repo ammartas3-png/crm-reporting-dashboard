@@ -18,7 +18,6 @@ Both programs use the same uploaded inputs:
 - Pivot table name for Report Generator
 - Up to four CRM file uploads in fixed browse rows
 - Platform dropdown beside each uploaded CRM file
-- Optional CRM sheet name shared by all CRM files
 - Optional output filename. Report Generator defaults to `crm_powerbi_output.xlsx`;
   Bulk Country Reports defaults to `crm_country_report.xlsx`.
 
