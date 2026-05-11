@@ -25,7 +25,7 @@ PROGRAM_A = "program_a"
 PROGRAM_B = "program_b"
 PROGRAM_A_OUTPUT_FILENAME = "crm_powerbi_output.xlsx"
 PROGRAM_B_OUTPUT_FILENAME = "crm_country_report.xlsx"
-MAX_UPLOAD_BYTES = 45 * 1024 * 1024
+MAX_UPLOAD_BYTES = 4 * 1024 * 1024
 
 
 def _read_static_file(filename: str) -> bytes:
@@ -110,7 +110,10 @@ def _parse_form(handler: BaseHTTPRequestHandler) -> cgi.FieldStorage:
     if content_length <= 0:
         raise ValueError("No upload data was received.")
     if content_length > MAX_UPLOAD_BYTES:
-        raise ValueError("Upload is too large. Please keep the total upload under 45 MB.")
+        raise ValueError(
+            "Upload is too large for this Vercel deployment. "
+            "Please keep the total selected upload size under 4 MB."
+        )
 
     body = handler.rfile.read(content_length)
     headers = Message()

@@ -97,7 +97,8 @@
           </p>
           <p class="format-note">
             Note: only Excel .xlsx files are supported. Do not upload CSV, PDF,
-            images, or any other file format.
+            images, or any other file format. On this Vercel deployment, the
+            total selected upload size must be under 4 MB.
           </p>
 
           <input id="crm-count" type="hidden" name="crm_count" value="1" />
@@ -211,6 +212,8 @@
       const pivotHint = document.querySelector("#pivot-hint");
       const outputFile = document.querySelector("#output-file");
       const outputHint = document.querySelector("#output-hint");
+      const powerbiInput = document.querySelector('input[name="powerbi_report"]');
+      const maxUploadBytes = 4 * 1024 * 1024;
 
       const programConfig = {
         program_a: {
@@ -236,6 +239,10 @@
       function setStatus(message, type = "") {
         statusEl.textContent = message;
         statusEl.className = type;
+      }
+
+      function formatBytes(bytes) {
+        return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
       }
 
       function selectedProgram() {
@@ -326,6 +333,33 @@
         }
       }
 
+      function validateUploadSize() {
+        const selectedFiles = [
+          ...powerbiInput.files,
+          ...crmRows().flatMap((row) => [
+            ...row.querySelector(".crm-file-input").files,
+          ]),
+        ];
+        const totalBytes = selectedFiles.reduce((total, file) => total + file.size, 0);
+
+        powerbiInput.setCustomValidity("");
+        if (totalBytes > maxUploadBytes) {
+          powerbiInput.setCustomValidity(
+            `The selected Excel files are ${formatBytes(totalBytes)} total. ` +
+              `Vercel can only receive about ${formatBytes(maxUploadBytes)} per request. ` +
+              "Please reduce the file size or split the report.",
+          );
+          setStatus(
+            `Upload is too large (${formatBytes(totalBytes)}). ` +
+              `This Vercel deployment can receive about ${formatBytes(maxUploadBytes)} per request.`,
+            "error",
+          );
+          return false;
+        }
+
+        return true;
+      }
+
       function filenameFromDisposition(disposition) {
         const match = /filename="?([^";]+)"?/i.exec(disposition || "");
         return match
@@ -360,6 +394,7 @@
         syncProgramFields();
         updateCrmRowIndexes();
         validateCrmRows();
+        validateUploadSize();
 
         if (!form.reportValidity()) {
           return;
