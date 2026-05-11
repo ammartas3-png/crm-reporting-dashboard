@@ -12,7 +12,7 @@
         <p class="eyebrow">Report generator</p>
         <h1>CRM + PowerBI Report Dashboard</h1>
         <p>
-          Choose Report Generator or M-inhousemedia report, upload the required
+          Choose Report Generator or Bulk Country Reports, upload the required
           Excel files, and generate the selected enriched workbook in the browser.
         </p>
       </section>
@@ -35,10 +35,11 @@
             <label class="program-card">
               <input type="radio" name="program" value="program_b" />
               <span>
-                <strong>M-inhousemedia report</strong>
+                <strong>Bulk Country Reports (M-inhousemedia report etc.)</strong>
                 <small>
-                  Main Report sheet plus one country sheet per Country, with
-                  formula-linked country rows and centered pivots.
+                  Generate bulk country reports with a Main Report sheet plus
+                  one sheet per Country, formula-linked country rows, and
+                  centered pivots.
                 </small>
               </span>
             </label>
@@ -271,7 +272,7 @@
           fallbackDownload: "crm_country_report.xlsx",
           pivotRequired: false,
           pivotHint:
-            "M-inhousemedia report uses fixed workbook labels: Main Report uses M-Inhousemedia and country sheets use country names.",
+            "Bulk Country Reports uses fixed workbook labels: Main Report uses M-Inhousemedia and country sheets use country names.",
           outputHint:
             "Leave blank for crm_country_report.xlsx. In the web app this is used as the downloaded filename.",
         },

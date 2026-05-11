@@ -76,7 +76,7 @@ def _output_filename(raw_name: str, fallback: str) -> str:
 def _program_from_form(form: cgi.FieldStorage) -> str:
     program = _field_text(form, "program") or PROGRAM_A
     if program not in {PROGRAM_A, PROGRAM_B}:
-        raise ValueError("Please select Report Generator or M-inhousemedia report.")
+        raise ValueError("Please select Report Generator or Bulk Country Reports.")
     return program
 
 

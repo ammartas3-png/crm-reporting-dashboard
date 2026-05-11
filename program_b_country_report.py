@@ -1,6 +1,6 @@
-"""M-inhousemedia report: create a CRM country-split workbook.
+"""Bulk Country Reports: create CRM country-split workbooks.
 
-M-inhousemedia report shares the CRM/PowerBI merge rules with Report Generator,
+Bulk Country Reports shares the CRM/PowerBI merge rules with Report Generator,
 then writes:
 
 - a "Main Report" sheet with all rows, a status pivot labelled "M-Inhousemedia",

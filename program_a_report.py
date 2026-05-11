@@ -1,7 +1,7 @@
 """Report Generator: CRM output workbook enriched with PowerBI comments.
 
 This module names the currently deployed report generator explicitly so the web
-dashboard can route between Report Generator and M-inhousemedia report without
+dashboard can route between Report Generator and Bulk Country Reports without
 changing the existing implementation.
 """
 

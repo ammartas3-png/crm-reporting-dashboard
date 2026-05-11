@@ -8,8 +8,9 @@ The web app lets you choose between two separate report programs:
 
 - **Report Generator**: the original deployed CRM output workbook
   with combined data and pivots.
-- **M-inhousemedia report**: a Main Report sheet plus one sheet per
-  Country, with formula-linked country rows and centered pivots.
+- **Bulk Country Reports (M-inhousemedia report etc.)**: a Main Report sheet
+  plus one sheet per Country, with formula-linked country rows and centered
+  pivots.
 
 Both programs use the same uploaded inputs:
 
@@ -20,7 +21,7 @@ Both programs use the same uploaded inputs:
 - Platform name beside each uploaded CRM file
 - Optional CRM sheet name shared by all CRM files
 - Optional output filename. Report Generator defaults to `crm_powerbi_output.xlsx`;
-  M-inhousemedia report defaults to `crm_country_report.xlsx`.
+  Bulk Country Reports defaults to `crm_country_report.xlsx`.
 
 After submission, the Python serverless function generates the enriched `.xlsx`
 workbook and returns it as a browser download.
