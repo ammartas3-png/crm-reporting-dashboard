@@ -118,6 +118,18 @@ label:last-child {
   line-height: 1.45;
 }
 
+.format-note {
+  background: #fff7d6;
+  border: 1px solid #f0d47a;
+  border-radius: 12px;
+  color: #6f5600;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.45;
+  margin: 12px 0 16px;
+  padding: 12px 14px;
+}
+
 .program-grid {
   display: grid;
   gap: 14px;
