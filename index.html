@@ -97,8 +97,8 @@
           </p>
           <p class="format-note">
             Note: only Excel .xlsx files are supported. Do not upload CSV, PDF,
-            images, or any other file format. On this Vercel deployment, the
-            total selected upload size must be under 4 MB.
+            images, or any other file format. Files are uploaded directly to
+            Vercel Blob before the report is generated.
           </p>
 
           <input id="crm-count" type="hidden" name="crm_count" value="1" />
@@ -213,7 +213,8 @@
       const outputFile = document.querySelector("#output-file");
       const outputHint = document.querySelector("#output-hint");
       const powerbiInput = document.querySelector('input[name="powerbi_report"]');
-      const maxUploadBytes = 4 * 1024 * 1024;
+      const xlsxContentType =
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
       const programConfig = {
         program_a: {
@@ -239,10 +240,6 @@
       function setStatus(message, type = "") {
         statusEl.textContent = message;
         statusEl.className = type;
-      }
-
-      function formatBytes(bytes) {
-        return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
       }
 
       function selectedProgram() {
@@ -333,40 +330,6 @@
         }
       }
 
-      function validateUploadSize() {
-        const selectedFiles = [
-          ...powerbiInput.files,
-          ...crmRows().flatMap((row) => [
-            ...row.querySelector(".crm-file-input").files,
-          ]),
-        ];
-        const totalBytes = selectedFiles.reduce((total, file) => total + file.size, 0);
-
-        powerbiInput.setCustomValidity("");
-        if (totalBytes > maxUploadBytes) {
-          powerbiInput.setCustomValidity(
-            `The selected Excel files are ${formatBytes(totalBytes)} total. ` +
-              `Vercel can only receive about ${formatBytes(maxUploadBytes)} per request. ` +
-              "Please reduce the file size or split the report.",
-          );
-          setStatus(
-            `Upload is too large (${formatBytes(totalBytes)}). ` +
-              `This Vercel deployment can receive about ${formatBytes(maxUploadBytes)} per request.`,
-            "error",
-          );
-          return false;
-        }
-
-        return true;
-      }
-
-      function filenameFromDisposition(disposition) {
-        const match = /filename="?([^";]+)"?/i.exec(disposition || "");
-        return match
-          ? match[1]
-          : programConfig[selectedProgram()].fallbackDownload;
-      }
-
       async function errorMessageFromResponse(response) {
         const fallback = "Unable to generate the workbook.";
         const body = await response.text();
@@ -383,6 +346,91 @@
         }
       }
 
+      function selectedCrmEntries() {
+        return crmRows()
+          .map((row) => {
+            const fileInput = row.querySelector(".crm-file-input");
+            const platformInput = row.querySelector(".platform-input");
+            return {
+              file: fileInput.files[0] || null,
+              platform: platformInput.value.trim(),
+            };
+          })
+          .filter((entry) => entry.file);
+      }
+
+      async function requestBlobToken(file) {
+        const response = await fetch("/api/blob-token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filename: file.name,
+            contentType: xlsxContentType,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(await errorMessageFromResponse(response));
+        }
+
+        return response.json();
+      }
+
+      async function uploadFileToBlob(file, label, index, total) {
+        setStatus(`Uploading ${label} to Vercel Blob (${index}/${total})...`, "pending");
+        const tokenData = await requestBlobToken(file);
+        const uploadUrl =
+          "https://vercel.com/api/blob/?" +
+          new URLSearchParams({ pathname: tokenData.pathname }).toString();
+        const response = await fetch(uploadUrl, {
+          method: "PUT",
+          body: file,
+          headers: {
+            authorization: `Bearer ${tokenData.clientToken}`,
+            "x-api-version": "12",
+            "x-vercel-blob-access": "public",
+            "x-content-type": xlsxContentType,
+          },
+        });
+
+        if (!response.ok) {
+          const message = await response.text();
+          throw new Error(message || `Unable to upload ${label} to Vercel Blob.`);
+        }
+
+        return {
+          ...(await response.json()),
+          filename: file.name,
+        };
+      }
+
+      async function uploadSelectedFilesToBlob() {
+        const crmEntries = selectedCrmEntries();
+        const totalUploads = 1 + crmEntries.length;
+        const powerbiBlob = await uploadFileToBlob(
+          powerbiInput.files[0],
+          "PowerBI report",
+          1,
+          totalUploads,
+        );
+        const crmBlobs = [];
+
+        for (const [index, entry] of crmEntries.entries()) {
+          const blob = await uploadFileToBlob(
+            entry.file,
+            `CRM file #${index + 1}`,
+            index + 2,
+            totalUploads,
+          );
+          crmBlobs.push({
+            platform: entry.platform,
+            blob,
+          });
+        }
+
+        return { powerbiBlob, crmBlobs };
+      }
+
       programInputs.forEach((input) => {
         input.addEventListener("change", syncProgramFields);
       });
@@ -394,7 +442,6 @@
         syncProgramFields();
         updateCrmRowIndexes();
         validateCrmRows();
-        validateUploadSize();
 
         if (!form.reportValidity()) {
           return;
@@ -405,27 +452,36 @@
         setStatus("Uploading files and generating workbook...", "pending");
 
         try {
+          const { powerbiBlob, crmBlobs } = await uploadSelectedFilesToBlob();
+          setStatus("Generating workbook from uploaded files...", "pending");
           const response = await fetch("/api/generate", {
             method: "POST",
-            body: new FormData(form),
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              program: selectedProgram(),
+              pivot_name: pivotName.value,
+              output_file: outputFile.value,
+              powerbi_blob: powerbiBlob,
+              crm_blobs: crmBlobs,
+            }),
           });
 
           if (!response.ok) {
             throw new Error(await errorMessageFromResponse(response));
           }
 
-          const blob = await response.blob();
-          const filename = filenameFromDisposition(
-            response.headers.get("content-disposition"),
-          );
-          const url = URL.createObjectURL(blob);
+          const payload = await response.json();
+          const outputBlob = payload.output;
+          if (!outputBlob?.url) {
+            throw new Error("The generated workbook download URL was not returned.");
+          }
           const link = document.createElement("a");
-          link.href = url;
-          link.download = filename;
+          link.href = outputBlob.downloadUrl || outputBlob.url;
+          link.download =
+            outputBlob.filename || programConfig[selectedProgram()].fallbackDownload;
           document.body.appendChild(link);
           link.click();
           link.remove();
-          URL.revokeObjectURL(url);
           setStatus("Done. Your workbook download has started.", "success");
         } catch (error) {
           setStatus(error.message, "error");

@@ -21,8 +21,10 @@ Both programs use the same uploaded inputs:
 - Optional output filename. Report Generator defaults to `crm_powerbi_output.xlsx`;
   Bulk Country Reports defaults to `crm_country_report.xlsx`.
 
-After submission, the Python serverless function generates the enriched `.xlsx`
-workbook and returns it as a browser download.
+After submission, the browser uploads the selected `.xlsx` files directly to
+Vercel Blob. The Python serverless function then downloads those Blob files,
+generates the enriched workbook, uploads the result back to Blob, and returns a
+download URL.
 
 ## Local development
 
@@ -52,8 +54,10 @@ Then open the local URL printed by Vercel.
 This repository is Vercel-ready:
 
 1. Import the GitHub repository into Vercel.
-2. Keep the default framework preset as "Other".
-3. Deploy. Vercel will install `requirements.txt`, serve `index.html`, and run
+2. Create a Vercel Blob store and connect it to the project so
+   `BLOB_READ_WRITE_TOKEN` is available in the project environment variables.
+3. Keep the default framework preset as "Other".
+4. Deploy. Vercel will install `requirements.txt`, serve `index.html`, and run
    `api/generate.py` as the Python serverless function.
 
 ## Required spreadsheet columns

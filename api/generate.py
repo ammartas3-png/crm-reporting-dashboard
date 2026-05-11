@@ -3,15 +3,24 @@
 from __future__ import annotations
 
 import cgi
+import base64
+import hashlib
+import hmac
 import json
+import os
 import re
 import sys
 import tempfile
+import time
+import uuid
 from email.message import Message
 from http.server import BaseHTTPRequestHandler
 from io import BytesIO
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode, urlparse
+from urllib.request import Request, urlopen
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -25,7 +34,14 @@ PROGRAM_A = "program_a"
 PROGRAM_B = "program_b"
 PROGRAM_A_OUTPUT_FILENAME = "crm_powerbi_output.xlsx"
 PROGRAM_B_OUTPUT_FILENAME = "crm_country_report.xlsx"
-MAX_UPLOAD_BYTES = 4 * 1024 * 1024
+MAX_JSON_BYTES = 1024 * 1024
+BLOB_API_URL = "https://vercel.com/api/blob"
+BLOB_API_VERSION = "12"
+XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+ALLOWED_UPLOAD_CONTENT_TYPES = [
+    XLSX_CONTENT_TYPE,
+    "application/octet-stream",
+]
 
 
 def _read_static_file(filename: str) -> bytes:
@@ -34,6 +50,139 @@ def _read_static_file(filename: str) -> bytes:
 
 def _json_bytes(payload: dict[str, Any]) -> bytes:
     return json.dumps(payload).encode("utf-8")
+
+
+def _send_json(
+    request_handler: BaseHTTPRequestHandler,
+    payload: dict[str, Any],
+    status: int = 200,
+) -> None:
+    data = _json_bytes(payload)
+    request_handler.send_response(status)
+    request_handler.send_header("Content-Type", "application/json; charset=utf-8")
+    request_handler.send_header("Content-Length", str(len(data)))
+    request_handler.send_header("Access-Control-Allow-Origin", "*")
+    request_handler.end_headers()
+    request_handler.wfile.write(data)
+
+
+def _blob_token() -> str:
+    token = os.environ.get("BLOB_READ_WRITE_TOKEN", "").strip()
+    if not token:
+        raise ValueError(
+            "Vercel Blob is not configured. Create/connect a Vercel Blob store "
+            "for this project so BLOB_READ_WRITE_TOKEN is available."
+        )
+    return token
+
+
+def _blob_store_id(token: str) -> str:
+    parts = token.split("_")
+    if len(parts) < 4 or not parts[3]:
+        raise ValueError("Invalid BLOB_READ_WRITE_TOKEN.")
+    return parts[3]
+
+
+def _blob_path(filename: str, prefix: str) -> str:
+    safe_name = _safe_filename(filename, "upload.xlsx")
+    return f"crm-reporting-dashboard/{prefix}/{uuid.uuid4().hex}/{safe_name}"
+
+
+def _generate_blob_client_token(pathname: str) -> str:
+    read_write_token = _blob_token()
+    valid_until_ms = int((time.time() + 60 * 60) * 1000)
+    token_payload = {
+        "pathname": pathname,
+        "access": "public",
+        "addRandomSuffix": True,
+        "allowedContentTypes": ALLOWED_UPLOAD_CONTENT_TYPES,
+        "validUntil": valid_until_ms,
+    }
+
+    payload = base64.b64encode(
+        json.dumps(token_payload, separators=(",", ":")).encode("utf-8")
+    ).decode("utf-8")
+    signature = hmac.new(
+        read_write_token.encode("utf-8"),
+        payload.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    encoded_token = base64.b64encode(f"{signature}.{payload}".encode("utf-8")).decode(
+        "utf-8"
+    )
+    return f"vercel_blob_client_{_blob_store_id(read_write_token)}_{encoded_token}"
+
+
+def _parse_json_request(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
+    content_length = int(handler.headers.get("content-length", "0") or "0")
+    if content_length <= 0:
+        raise ValueError("No request data was received.")
+    if content_length > MAX_JSON_BYTES:
+        raise ValueError("Request metadata is too large.")
+
+    raw = handler.rfile.read(content_length)
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError("Invalid JSON request.") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Invalid JSON request.")
+    return payload
+
+
+def _is_blob_url(url: str) -> bool:
+    parsed = urlparse(url)
+    hostname = parsed.hostname or ""
+    return parsed.scheme == "https" and hostname.endswith(".blob.vercel-storage.com")
+
+
+def _download_blob_file(blob: dict[str, Any], directory: Path, fallback_name: str) -> Path:
+    url = str(blob.get("downloadUrl") or blob.get("url") or "")
+    if not _is_blob_url(url):
+        raise ValueError(f"Invalid Blob URL for {fallback_name}.")
+
+    filename = _safe_filename(
+        str(blob.get("filename") or blob.get("pathname") or ""),
+        fallback_name,
+    )
+    path = directory / filename
+
+    request = Request(url)
+    try:
+        with urlopen(request, timeout=120) as response:
+            path.write_bytes(response.read())
+    except (HTTPError, URLError) as exc:
+        raise ValueError(f"Unable to download {fallback_name} from Vercel Blob.") from exc
+
+    if path.stat().st_size == 0:
+        raise ValueError(f"{filename} is empty.")
+    return path
+
+
+def _upload_output_to_blob(output_path: Path, output_filename: str) -> dict[str, Any]:
+    token = _blob_token()
+    pathname = _blob_path(output_filename, "outputs")
+    url = f"{BLOB_API_URL}/?{urlencode({'pathname': pathname})}"
+    request = Request(
+        url,
+        data=output_path.read_bytes(),
+        method="PUT",
+        headers={
+            "authorization": f"Bearer {token}",
+            "x-api-version": BLOB_API_VERSION,
+            "x-vercel-blob-access": "public",
+            "x-content-type": XLSX_CONTENT_TYPE,
+            "x-add-random-suffix": "1",
+        },
+    )
+    try:
+        with urlopen(request, timeout=120) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, json.JSONDecodeError) as exc:
+        raise ValueError("Unable to upload the generated workbook to Vercel Blob.") from exc
+
+    payload["filename"] = output_filename
+    return payload
 
 
 def _field(form: cgi.FieldStorage, name: str) -> cgi.FieldStorage | None:
@@ -109,11 +258,6 @@ def _parse_form(handler: BaseHTTPRequestHandler) -> cgi.FieldStorage:
     content_length = int(handler.headers.get("content-length", "0") or "0")
     if content_length <= 0:
         raise ValueError("No upload data was received.")
-    if content_length > MAX_UPLOAD_BYTES:
-        raise ValueError(
-            "Upload is too large for this Vercel deployment. "
-            "Please keep the total selected upload size under 4 MB."
-        )
 
     body = handler.rfile.read(content_length)
     headers = Message()
@@ -130,6 +274,129 @@ def _parse_form(handler: BaseHTTPRequestHandler) -> cgi.FieldStorage:
         environ=environ,
         keep_blank_values=True,
     )
+
+
+def _program_from_value(value: Any) -> str:
+    program = str(value or PROGRAM_A).strip()
+    if program not in {PROGRAM_A, PROGRAM_B}:
+        raise ValueError("Please select Report Generator or Bulk Country Reports.")
+    return program
+
+
+def _build_from_files(
+    *,
+    program: str,
+    pivot_name: str,
+    powerbi_path: Path,
+    crm_files: list[Path],
+    platforms: list[str],
+    output_path: Path,
+) -> None:
+    common_args = {
+        "powerbi_report": powerbi_path,
+        "crm_files": crm_files,
+        "platforms": platforms,
+        "output_file": output_path,
+        "powerbi_sheet": None,
+        "crm_sheet": None,
+    }
+    if program == PROGRAM_B:
+        program_b_country_report.build_output(**common_args)
+    else:
+        program_a_report.build_output(
+            **common_args,
+            pivot_name=pivot_name,
+        )
+
+
+def _handle_blob_token_request(handler: BaseHTTPRequestHandler) -> None:
+    try:
+        payload = _parse_json_request(handler)
+        filename = _safe_filename(str(payload.get("filename") or ""), "upload.xlsx")
+        content_type = str(payload.get("contentType") or XLSX_CONTENT_TYPE)
+        if content_type not in ALLOWED_UPLOAD_CONTENT_TYPES:
+            content_type = XLSX_CONTENT_TYPE
+        pathname = _blob_path(filename, "inputs")
+        response = {
+            "pathname": pathname,
+            "clientToken": _generate_blob_client_token(pathname),
+            "contentType": content_type,
+        }
+    except Exception as exc:
+        _send_json(handler, {"error": str(exc)}, status=400)
+        return
+
+    _send_json(handler, response)
+
+
+def _handle_blob_generate_request(handler: BaseHTTPRequestHandler) -> None:
+    try:
+        payload = _parse_json_request(handler)
+        program = _program_from_value(payload.get("program"))
+        pivot_name = str(payload.get("pivot_name") or "").strip()
+        if program == PROGRAM_A and not pivot_name:
+            raise ValueError("Pivot table name is required for Report Generator.")
+
+        powerbi_blob = payload.get("powerbi_blob")
+        crm_blobs = payload.get("crm_blobs")
+        if not isinstance(powerbi_blob, dict):
+            raise ValueError("Please upload the PowerBI report.")
+        if not isinstance(crm_blobs, list) or not crm_blobs:
+            raise ValueError("Please upload at least one CRM file.")
+
+        default_output = (
+            PROGRAM_B_OUTPUT_FILENAME if program == PROGRAM_B else PROGRAM_A_OUTPUT_FILENAME
+        )
+        output_filename = _output_filename(str(payload.get("output_file") or ""), default_output)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            powerbi_path = _download_blob_file(
+                powerbi_blob,
+                tmp_path,
+                "PowerBI report.xlsx",
+            )
+
+            crm_files: list[Path] = []
+            platforms: list[str] = []
+            for index, item in enumerate(crm_blobs):
+                if not isinstance(item, dict):
+                    continue
+                platform = str(item.get("platform") or "").strip()
+                blob = item.get("blob")
+                if not platform:
+                    raise ValueError(
+                        f"Platform name for CRM file #{index + 1} is required."
+                    )
+                if not isinstance(blob, dict):
+                    raise ValueError(f"Please upload CRM file #{index + 1}.")
+                crm_files.append(
+                    _download_blob_file(
+                        blob,
+                        tmp_path,
+                        f"CRM file #{index + 1}.xlsx",
+                    )
+                )
+                platforms.append(platform)
+
+            if not crm_files:
+                raise ValueError("Please upload at least one CRM file.")
+
+            output_path = tmp_path / output_filename
+            _build_from_files(
+                program=program,
+                pivot_name=pivot_name,
+                powerbi_path=powerbi_path,
+                crm_files=crm_files,
+                platforms=platforms,
+                output_path=output_path,
+            )
+            output_blob = _upload_output_to_blob(output_path, output_filename)
+    except Exception as exc:
+        _send_json(handler, {"error": str(exc)}, status=400)
+        return
+
+    _send_json(handler, {"output": output_blob})
 
 
 class handler(BaseHTTPRequestHandler):
@@ -165,6 +432,16 @@ class handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self) -> None:
+        path = urlparse(self.path).path
+        if path == "/api/blob-token":
+            _handle_blob_token_request(self)
+            return
+
+        content_type = self.headers.get("content-type", "")
+        if content_type.lower().startswith("application/json"):
+            _handle_blob_generate_request(self)
+            return
+
         try:
             form = _parse_form(self)
             program = _program_from_form(form)
@@ -227,21 +504,14 @@ class handler(BaseHTTPRequestHandler):
                     default_output,
                 )
                 output_path = tmp_path / output_filename
-                common_args = {
-                    "powerbi_report": powerbi_path,
-                    "crm_files": crm_files,
-                    "platforms": platforms,
-                    "output_file": output_path,
-                    "powerbi_sheet": _optional_text(form, "powerbi_sheet"),
-                    "crm_sheet": _optional_text(form, "crm_sheet"),
-                }
-                if program == PROGRAM_B:
-                    program_b_country_report.build_output(**common_args)
-                else:
-                    program_a_report.build_output(
-                        **common_args,
-                        pivot_name=pivot_name,
-                    )
+                _build_from_files(
+                    program=program,
+                    pivot_name=pivot_name,
+                    powerbi_path=powerbi_path,
+                    crm_files=crm_files,
+                    platforms=platforms,
+                    output_path=output_path,
+                )
                 workbook_bytes = output_path.read_bytes()
 
         except Exception as exc:

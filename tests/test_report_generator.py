@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import base64
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from openpyxl import Workbook, load_workbook
 
+from api import generate as api_generate
 import program_b_country_report
 from report_generator import (
     CRM_COLUMNS,
@@ -135,6 +139,32 @@ class ReportGeneratorTests(unittest.TestCase):
 
             self.assertEqual(lookup[("123", "branda")]["Call Attempts"], 2)
             self.assertEqual(lookup[("123", "branda")]["Comments"], ["L1 reached"])
+
+
+class VercelBlobApiTests(unittest.TestCase):
+    def test_blob_client_token_contains_upload_scope(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"BLOB_READ_WRITE_TOKEN": "vercel_blob_rw_store123_secret"},
+        ):
+            token = api_generate._generate_blob_client_token("inputs/example.xlsx")
+
+        self.assertTrue(token.startswith("vercel_blob_client_store123_"))
+        encoded_token = token.split("_", 4)[4]
+        signed_payload = base64.b64decode(encoded_token).decode("utf-8")
+        _, encoded_payload = signed_payload.split(".", 1)
+        payload = json.loads(base64.b64decode(encoded_payload).decode("utf-8"))
+
+        self.assertEqual(payload["pathname"], "inputs/example.xlsx")
+        self.assertEqual(payload["access"], "public")
+        self.assertTrue(payload["addRandomSuffix"])
+        self.assertIn(api_generate.XLSX_CONTENT_TYPE, payload["allowedContentTypes"])
+
+    def test_blob_url_validation_rejects_non_blob_hosts(self) -> None:
+        self.assertTrue(
+            api_generate._is_blob_url("https://abc.public.blob.vercel-storage.com/a.xlsx")
+        )
+        self.assertFalse(api_generate._is_blob_url("https://example.com/a.xlsx"))
 
 
 class ProgramBCountryReportTests(unittest.TestCase):
