@@ -98,6 +98,17 @@ Configure these environment variables in Vercel:
 - `ALLOWED_USERS` - comma-separated Telegram user IDs, for example
   `123456789,987654321`.
 
+Current default Google Sheets setup:
+
+- Service account:
+  `ammar-265@rapid-chassis-424212-r3.iam.gserviceaccount.com`
+- Spreadsheet ID:
+  `1cXyL60QniZevYOb06adN5FPHWN5tbYhiHX12yIa6kG4`
+- Leads tab: `May 26 Turkey  Leads`
+
+The service account must have access to the spreadsheet, and Vercel still needs
+the matching `GOOGLE_PRIVATE_KEY` secret to authenticate as that account.
+
 Optional tab/range overrides:
 
 - `GOOGLE_LEADS_TAB`, `GOOGLE_LEADS_RANGE`
@@ -119,6 +130,9 @@ curl -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
 The initial tab configuration is in `config/sheetsConfig.js`. Update that file,
 or the optional tab/range environment variables, when final Google Sheet and tab
 names are available.
+
+For local setup, copy `.env.example` to `.env.local` and fill in
+`TELEGRAM_BOT_TOKEN`, `GOOGLE_PRIVATE_KEY`, and `ALLOWED_USERS`.
 
 ## Required spreadsheet columns
 

@@ -22,13 +22,32 @@ const DEFAULT_TRANSACTION_COLUMNS = [
   "Country",
 ];
 
+export const DEFAULT_GOOGLE_SPREADSHEET_ID = "1cXyL60QniZevYOb06adN5FPHWN5tbYhiHX12yIa6kG4";
+export const DEFAULT_GOOGLE_SERVICE_ACCOUNT_EMAIL =
+  "ammar-265@rapid-chassis-424212-r3.iam.gserviceaccount.com";
+export const DEFAULT_LEADS_TAB = "May 26 Turkey  Leads";
+
+export function quoteSheetName(sheetName) {
+  return `'${String(sheetName).replace(/'/g, "''")}'`;
+}
+
+export function sheetRange(sheetName, columns = "A:Z") {
+  return `${quoteSheetName(sheetName)}!${columns}`;
+}
+
+const leadsTabName = process.env.GOOGLE_LEADS_TAB || DEFAULT_LEADS_TAB;
+const ftdTabName = process.env.GOOGLE_FTD_TAB || "FTD";
+const transactionTabName = process.env.GOOGLE_TRANSACTION_TAB || "TRANSACTION";
+
 export const sheetsConfig = {
-  spreadsheetId: process.env.GOOGLE_SPREADSHEET_ID || "",
+  spreadsheetId: process.env.GOOGLE_SPREADSHEET_ID || DEFAULT_GOOGLE_SPREADSHEET_ID,
+  serviceAccountEmail:
+    process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || DEFAULT_GOOGLE_SERVICE_ACCOUNT_EMAIL,
   tabs: {
     leads: {
       key: "leads",
-      name: process.env.GOOGLE_LEADS_TAB || "Leads",
-      range: process.env.GOOGLE_LEADS_RANGE || "Leads!A:Z",
+      name: leadsTabName,
+      range: process.env.GOOGLE_LEADS_RANGE || sheetRange(leadsTabName),
       dateColumn: "Created",
       countryColumn: "Country",
       agentColumn: "First Call Agent",
@@ -38,8 +57,8 @@ export const sheetsConfig = {
     },
     ftd: {
       key: "ftd",
-      name: process.env.GOOGLE_FTD_TAB || "FTD",
-      range: process.env.GOOGLE_FTD_RANGE || "FTD!A:Z",
+      name: ftdTabName,
+      range: process.env.GOOGLE_FTD_RANGE || sheetRange(ftdTabName),
       dateColumn: "Date",
       countryColumn: "Country",
       agentColumn: "Agent",
@@ -49,8 +68,8 @@ export const sheetsConfig = {
     },
     transactions: {
       key: "transactions",
-      name: process.env.GOOGLE_TRANSACTION_TAB || "TRANSACTION",
-      range: process.env.GOOGLE_TRANSACTION_RANGE || "TRANSACTION!A:Z",
+      name: transactionTabName,
+      range: process.env.GOOGLE_TRANSACTION_RANGE || sheetRange(transactionTabName),
       dateColumn: "Date",
       countryColumn: "Country",
       agentColumn: null,
