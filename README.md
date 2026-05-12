@@ -57,6 +57,39 @@ This repository is Vercel-ready:
 3. Deploy. Vercel will install `requirements.txt`, serve `index.html`, and run
    `api/generate.py` as the Python serverless function.
 
+## Telegram bot
+
+The bot webhook lives at `/api/telegram`. It answers CRM report help commands and
+points users to the web dashboard for Excel uploads.
+
+Supported commands:
+
+- `/start` or `/help` - show the help menu.
+- `/programa` - explain Program A.
+- `/programb` - explain Program B.
+- `/columns` - list required CRM and PowerBI columns.
+- `/link` - show the dashboard URL.
+
+Configure these environment variables in Vercel:
+
+- `PUBLIC_APP_URL` - the deployed dashboard URL, for example
+  `https://your-app.vercel.app`.
+- `TELEGRAM_WEBHOOK_SECRET` - a random secret string used to verify Telegram
+  webhook requests.
+
+Keep the BotFather token out of the repository. Use it only from a secure shell
+or secret manager when registering the webhook:
+
+```bash
+export TELEGRAM_BOT_TOKEN="your-bot-token"
+export TELEGRAM_WEBHOOK_SECRET="your-random-secret"
+export PUBLIC_APP_URL="https://your-app.vercel.app"
+
+curl -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d "{\"url\":\"${PUBLIC_APP_URL}/api/telegram\",\"secret_token\":\"${TELEGRAM_WEBHOOK_SECRET}\"}"
+```
+
 ## Required spreadsheet columns
 
 CRM files must include:
