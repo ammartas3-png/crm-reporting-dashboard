@@ -26,6 +26,15 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+# Project source modules
+!lib/
+!lib/*.js
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
