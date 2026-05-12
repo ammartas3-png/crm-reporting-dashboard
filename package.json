@@ -1,0 +1,36 @@
+{
+  "name": "crm-reporting-dashboard",
+  "version": "1.0.0",
+  "description": "Interactive web GUI for generating CRM + PowerBI Excel reports.",
+  "type": "module",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "test": "node --test tests/js/*.test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ammartas3-png/crm-reporting-dashboard.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/ammartas3-png/crm-reporting-dashboard/issues"
+  },
+  "homepage": "https://github.com/ammartas3-png/crm-reporting-dashboard#readme",
+  "dependencies": {
+    "googleapis": "^171.4.0",
+    "next": "^16.2.6",
+    "postcss": "8.5.14",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
+  },
+  "overrides": {
+    "next": {},
+    "postcss": "8.5.14"
+  }
+}

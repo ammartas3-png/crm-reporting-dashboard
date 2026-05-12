@@ -31,6 +31,7 @@ Install dependencies:
 
 ```bash
 python3 -m pip install -r requirements.txt
+npm install
 ```
 
 Run the CLI version:
@@ -40,7 +41,7 @@ python3 program_a_report.py
 python3 program_b_country_report.py
 ```
 
-For the Vercel-style web app, install the Vercel CLI and run:
+For the Vercel-style web app and Telegram bot, install the Vercel CLI and run:
 
 ```bash
 npx vercel dev
@@ -53,9 +54,85 @@ Then open the local URL printed by Vercel.
 This repository is Vercel-ready:
 
 1. Import the GitHub repository into Vercel.
-2. Keep the default framework preset as "Other".
-3. Deploy. Vercel will install `requirements.txt`, serve `index.html`, and run
-   `api/generate.py` as the Python serverless function.
+2. Deploy the Next.js app. Vercel will install `package.json` dependencies and
+   serve the Telegram route at `/api/telegram`.
+3. The existing Python workbook endpoint remains in `api/generate.py`.
+
+## Telegram bot
+
+The reporting bot webhook lives at `/api/telegram` using the Next.js App Router:
+
+```text
+app/api/telegram/route.js
+lib/telegram.js
+lib/googleSheets.js
+lib/queryRouter.js
+lib/calculations.js
+lib/permissions.js
+config/sheetsConfig.js
+```
+
+The bot receives Telegram messages, checks the Telegram user ID against
+`ALLOWED_USERS`, reads Google Sheets rows, calculates simple metrics, and sends a
+short answer back to Telegram.
+
+Supported commands:
+
+- `/start` - show example report questions.
+- `/help` - show supported examples.
+
+Supported MVP questions include:
+
+- `How many FTD today?`
+- `Germany total leads?`
+- `Ahmet total calls?`
+- `May Turkey leads count?`
+
+Configure these environment variables in Vercel:
+
+- `TELEGRAM_BOT_TOKEN` - BotFather token.
+- `GOOGLE_SERVICE_ACCOUNT_EMAIL` - Google service account email.
+- `GOOGLE_PRIVATE_KEY` - Google service account private key. Store multiline
+  keys with escaped newlines (`\n`) if your secret manager requires it.
+- `GOOGLE_SPREADSHEET_ID` - default spreadsheet ID.
+- `ALLOWED_USERS` - comma-separated Telegram user IDs, for example
+  `123456789,987654321`.
+
+Current default Google Sheets setup:
+
+- Service account:
+  `ammar-265@rapid-chassis-424212-r3.iam.gserviceaccount.com`
+- Spreadsheet ID:
+  `1cXyL60QniZevYOb06adN5FPHWN5tbYhiHX12yIa6kG4`
+- Leads tab: `May 26 Turkey  Leads`
+
+The service account must have access to the spreadsheet, and Vercel still needs
+the matching `GOOGLE_PRIVATE_KEY` secret to authenticate as that account.
+
+Optional tab/range overrides:
+
+- `GOOGLE_LEADS_TAB`, `GOOGLE_LEADS_RANGE`
+- `GOOGLE_FTD_TAB`, `GOOGLE_FTD_RANGE`
+- `GOOGLE_TRANSACTION_TAB`, `GOOGLE_TRANSACTION_RANGE`
+
+Keep the BotFather token out of the repository. Use it only from a secure shell
+or secret manager when registering the webhook:
+
+```bash
+export TELEGRAM_BOT_TOKEN="your-bot-token"
+export PUBLIC_APP_URL="https://your-next-app.vercel.app"
+
+curl -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d "{\"url\":\"${PUBLIC_APP_URL}/api/telegram\"}"
+```
+
+The initial tab configuration is in `config/sheetsConfig.js`. Update that file,
+or the optional tab/range environment variables, when final Google Sheet and tab
+names are available.
+
+For local setup, copy `.env.example` to `.env.local` and fill in
+`TELEGRAM_BOT_TOKEN`, `GOOGLE_PRIVATE_KEY`, and `ALLOWED_USERS`.
 
 ## Required spreadsheet columns
 
