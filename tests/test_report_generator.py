@@ -262,9 +262,18 @@ class ProgramBCountryReportTests(unittest.TestCase):
                 main.cell(status_pivot_start_row + 1, status_pivot_count_col).value,
                 '=COUNTIF(\'Main Report\'!$G$2:$G$3,"Decline")',
             )
+            invalid_country_index = STATUS_LIST.index("Invalid Country")
+            self.assertEqual(
+                main.cell(
+                    status_pivot_start_row + invalid_country_index,
+                    status_pivot_count_col,
+                ).value,
+                '=COUNTIF(\'Main Report\'!$G$2:$G$3,"Invalid Country")',
+            )
+            total_row = status_pivot_start_row + len(STATUS_LIST)
             self.assertEqual(
                 main.cell(status_pivot_start_row + 1, status_pivot_pct_col).value,
-                "=IFERROR(H7/H23,0)",
+                f"=IFERROR(H7/H{total_row},0)",
             )
 
             de_sheet = workbook["DE"]

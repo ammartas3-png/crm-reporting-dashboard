@@ -96,6 +96,7 @@ STATUS_LIST: list[str] = sorted(
         "Decline",
         "Denied Registration",
         "Duplicate",
+        "Invalid Country",
         "No Answer 1-5",
         "No Answer 5 up",
         "No Interest",
@@ -123,6 +124,7 @@ STATUS_COMMENT_RE = re.compile(
     r"|no potential\s*[-–]\s*no documents"
     r"|not interested|no interest"
     r"|in progress"
+    r"|invalid country"
     r"|potential|recall|under 18|wrong number or email"
     r")$",
     re.IGNORECASE,
