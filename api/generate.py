@@ -17,15 +17,21 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+import cr_maker  # noqa: E402
+import lead_splitter  # noqa: E402
 import program_a_report  # noqa: E402
 import program_b_country_report  # noqa: E402
 
 
+APP_REPORT = "report"
+APP_LEAD_SPLITTER = "lead_splitter"
+APP_CR = "cr"
 PROGRAM_A = "program_a"
 PROGRAM_B = "program_b"
 PROGRAM_A_OUTPUT_FILENAME = "crm_powerbi_output.xlsx"
 PROGRAM_B_OUTPUT_FILENAME = "crm_country_report.xlsx"
 MAX_UPLOAD_BYTES = 45 * 1024 * 1024
+XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def _read_static_file(filename: str) -> bytes:
@@ -71,6 +77,13 @@ def _output_filename(raw_name: str, fallback: str) -> str:
     if not name.lower().endswith(".xlsx"):
         name = f"{name}.xlsx"
     return name
+
+
+def _app_from_form(form: cgi.FieldStorage) -> str:
+    app = _field_text(form, "app") or APP_REPORT
+    if app not in {APP_REPORT, APP_LEAD_SPLITTER, APP_CR}:
+        raise ValueError("Please select Report, Lead Splitter, or CR.")
+    return app
 
 
 def _program_from_form(form: cgi.FieldStorage) -> str:
@@ -164,82 +177,118 @@ class handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         try:
             form = _parse_form(self)
-            program = _program_from_form(form)
-
-            pivot_name = _field_text(form, "pivot_name")
-            if program == PROGRAM_A and not pivot_name:
-                raise ValueError("Pivot table name is required for Program A.")
-
-            crm_count_raw = _field_text(form, "crm_count")
-            try:
-                crm_count = int(crm_count_raw)
-            except ValueError as exc:
-                raise ValueError("At least one CRM file is required.") from exc
-
-            if crm_count < 1:
-                raise ValueError("At least one CRM file is required.")
+            app = _app_from_form(form)
 
             with tempfile.TemporaryDirectory() as tmp:
                 tmp_path = Path(tmp)
-                powerbi_path = _save_upload(
-                    _field(form, "powerbi_report"),
-                    tmp_path,
-                    "PowerBI report",
-                )
+                if app == APP_REPORT:
+                    program = _program_from_form(form)
+                    pivot_name = _field_text(form, "pivot_name")
+                    if program == PROGRAM_A and not pivot_name:
+                        raise ValueError("Pivot table name is required for Program A.")
 
-                crm_files: list[Path] = []
-                platforms: list[str] = []
-                for index in range(crm_count):
-                    crm_field = _field(form, f"crm_file_{index}")
-                    platform = _field_text(form, f"platform_{index}")
-                    has_upload = _has_upload(crm_field)
-                    if not has_upload and not platform:
-                        continue
-                    if not has_upload:
-                        raise ValueError(
-                            f"Please upload CRM file #{index + 1}."
-                        )
-                    if not platform:
-                        raise ValueError(
-                            f"Platform name for CRM file #{index + 1} is required."
-                        )
-                    crm_path = _save_upload(
-                        crm_field,
+                    crm_count_raw = _field_text(form, "crm_count")
+                    try:
+                        crm_count = int(crm_count_raw)
+                    except ValueError as exc:
+                        raise ValueError("At least one CRM file is required.") from exc
+
+                    if crm_count < 1:
+                        raise ValueError("At least one CRM file is required.")
+
+                    powerbi_path = _save_upload(
+                        _field(form, "powerbi_report"),
                         tmp_path,
-                        f"CRM file #{index + 1}",
+                        "PowerBI report",
                     )
-                    crm_files.append(crm_path)
-                    platforms.append(platform)
 
-                if not crm_files:
-                    raise ValueError("Please upload at least one CRM file.")
+                    crm_files: list[Path] = []
+                    platforms: list[str] = []
+                    for index in range(crm_count):
+                        crm_field = _field(form, f"crm_file_{index}")
+                        platform = _field_text(form, f"platform_{index}")
+                        has_upload = _has_upload(crm_field)
+                        if not has_upload and not platform:
+                            continue
+                        if not has_upload:
+                            raise ValueError(f"Please upload CRM file #{index + 1}.")
+                        if not platform:
+                            raise ValueError(
+                                f"Platform name for CRM file #{index + 1} is required."
+                            )
+                        crm_path = _save_upload(
+                            crm_field,
+                            tmp_path,
+                            f"CRM file #{index + 1}",
+                        )
+                        crm_files.append(crm_path)
+                        platforms.append(platform)
 
-                default_output = (
-                    PROGRAM_B_OUTPUT_FILENAME
-                    if program == PROGRAM_B
-                    else PROGRAM_A_OUTPUT_FILENAME
-                )
-                output_filename = _output_filename(
-                    _field_text(form, "output_file"),
-                    default_output,
-                )
-                output_path = tmp_path / output_filename
-                common_args = {
-                    "powerbi_report": powerbi_path,
-                    "crm_files": crm_files,
-                    "platforms": platforms,
-                    "output_file": output_path,
-                    "powerbi_sheet": _optional_text(form, "powerbi_sheet"),
-                    "crm_sheet": _optional_text(form, "crm_sheet"),
-                }
-                if program == PROGRAM_B:
-                    program_b_country_report.build_output(**common_args)
+                    if not crm_files:
+                        raise ValueError("Please upload at least one CRM file.")
+
+                    default_output = (
+                        PROGRAM_B_OUTPUT_FILENAME
+                        if program == PROGRAM_B
+                        else PROGRAM_A_OUTPUT_FILENAME
+                    )
+                    response_filename = _output_filename(
+                        _field_text(form, "output_file"),
+                        default_output,
+                    )
+                    output_path = tmp_path / response_filename
+                    common_args = {
+                        "powerbi_report": powerbi_path,
+                        "crm_files": crm_files,
+                        "platforms": platforms,
+                        "output_file": output_path,
+                        "powerbi_sheet": _optional_text(form, "powerbi_sheet"),
+                        "crm_sheet": _optional_text(form, "crm_sheet"),
+                    }
+                    if program == PROGRAM_B:
+                        program_b_country_report.build_output(**common_args)
+                    else:
+                        program_a_report.build_output(
+                            **common_args,
+                            pivot_name=pivot_name,
+                        )
+                    response_bytes = output_path.read_bytes()
+                    response_content_type = XLSX_CONTENT_TYPE
+                elif app == APP_LEAD_SPLITTER:
+                    lead_input = _save_upload(
+                        _field(form, "lead_input"),
+                        tmp_path,
+                        "Lead splitter input file",
+                    )
+                    generated_paths = lead_splitter.build_outputs(
+                        input_path=lead_input,
+                        output_dir=tmp_path,
+                    )
+                    lead_kind = (_field_text(form, "lead_kind") or "lead").lower()
+                    if lead_kind == "lead":
+                        selected_output = generated_paths[0]
+                    elif lead_kind == "aff":
+                        if len(generated_paths) < 2:
+                            raise ValueError(
+                                "AFF by Status output was not generated from this input."
+                            )
+                        selected_output = generated_paths[1]
+                    else:
+                        raise ValueError("Invalid Lead Splitter output type requested.")
+                    response_filename = selected_output.name
+                    response_bytes = selected_output.read_bytes()
+                    response_content_type = XLSX_CONTENT_TYPE
                 else:
-                    program_a_report.build_output(
-                        **common_args,
-                        pivot_name=pivot_name,
+                    cr_input = _save_upload(
+                        _field(form, "cr_input"),
+                        tmp_path,
+                        "CR input file",
                     )
-                workbook_bytes = output_path.read_bytes()
+                    response_filename = cr_maker.default_output_filename()
+                    cr_output_path = tmp_path / response_filename
+                    cr_maker.process(cr_input, cr_output_path)
+                    response_bytes = cr_output_path.read_bytes()
+                    response_content_type = XLSX_CONTENT_TYPE
 
         except Exception as exc:
             self.send_response(400)
@@ -250,15 +299,12 @@ class handler(BaseHTTPRequestHandler):
             return
 
         self.send_response(200)
-        self.send_header(
-            "Content-Type",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+        self.send_header("Content-Type", response_content_type)
         self.send_header(
             "Content-Disposition",
-            f'attachment; filename="{output_filename}"',
+            f'attachment; filename="{response_filename}"',
         )
-        self.send_header("Content-Length", str(len(workbook_bytes)))
+        self.send_header("Content-Length", str(len(response_bytes)))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
-        self.wfile.write(workbook_bytes)
+        self.wfile.write(response_bytes)

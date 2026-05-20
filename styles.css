@@ -68,6 +68,35 @@ h1 {
   max-width: 760px;
 }
 
+.dashboard-alerts {
+  display: grid;
+  gap: 12px;
+  margin-top: 20px;
+  max-width: 900px;
+}
+
+.dashboard-alert {
+  border-radius: 16px;
+  font-size: 0.98rem;
+  font-weight: 800;
+  line-height: 1.5;
+  margin: 0;
+  padding: 14px 16px;
+}
+
+.info-alert {
+  background: #e9eefb;
+  border: 1px solid #b8c8ff;
+  color: var(--primary-dark);
+}
+
+.warning-alert,
+.submit-warning {
+  background: #fff0e8;
+  border: 1px solid #ffbd9b;
+  color: #8a3412;
+}
+
 .card {
   background: var(--card);
   border: 1px solid var(--border);
@@ -79,6 +108,44 @@ h1 {
 
 .compact {
   box-shadow: none;
+}
+
+.tabs-card {
+  margin-bottom: 12px;
+  padding: 14px;
+}
+
+.app-tabs {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.app-tab {
+  background: #eef3ff;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  color: var(--primary);
+  font-weight: 800;
+  min-height: 48px;
+}
+
+.app-tab:hover {
+  background: #e4ecff;
+}
+
+.app-tab.is-active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.app-panel {
+  display: none;
+}
+
+.app-panel.is-active {
+  display: block;
 }
 
 fieldset {
@@ -116,6 +183,52 @@ label:last-child {
   font-size: 0.9rem;
   font-weight: 500;
   line-height: 1.45;
+}
+
+.format-note {
+  background: #fff7d6;
+  border: 1px solid #f0d47a;
+  border-radius: 12px;
+  color: #6f5600;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.45;
+  margin: 12px 0 16px;
+  padding: 12px 14px;
+}
+
+.important-hint {
+  background: #e9eefb;
+  border-left: 4px solid var(--primary);
+  border-radius: 10px;
+  color: var(--primary-dark);
+  display: block;
+  font-weight: 800;
+  padding: 10px 12px;
+}
+
+.submit-warning {
+  border-radius: 18px;
+  font-size: 0.96rem;
+  font-weight: 700;
+  line-height: 1.5;
+  margin-top: 24px;
+  padding: 18px 20px;
+}
+
+.submit-warning strong {
+  display: block;
+  font-size: 1.05rem;
+  margin-bottom: 8px;
+}
+
+.submit-warning ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.submit-warning li + li {
+  margin-top: 6px;
 }
 
 .program-grid {
@@ -156,7 +269,8 @@ label:last-child {
 }
 
 input[type="text"],
-input[type="file"] {
+input[type="file"],
+select {
   background: #fff;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -172,6 +286,7 @@ input[type="file"] {
   cursor: pointer;
 }
 
+select:focus,
 input:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 4px rgba(34, 81, 209, 0.14);
@@ -191,12 +306,16 @@ input:focus {
   border-radius: 16px;
   display: grid;
   gap: 14px;
-  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) auto;
   padding: 16px;
 }
 
 .crm-row label {
   margin-bottom: 0;
+}
+
+.add-crm-file {
+  margin-top: 2px;
 }
 
 button {
@@ -271,6 +390,24 @@ button.danger:hover:not(:disabled) {
   color: var(--danger);
 }
 
+.status-line {
+  color: var(--muted);
+  font-weight: 700;
+  margin: 0;
+}
+
+.status-line.pending {
+  color: var(--primary);
+}
+
+.status-line.success {
+  color: var(--success);
+}
+
+.status-line.error {
+  color: var(--danger);
+}
+
 .columns-grid {
   display: grid;
   gap: 18px;
@@ -296,7 +433,8 @@ button.danger:hover:not(:disabled) {
 
   .crm-row,
   .program-grid,
-  .columns-grid {
+  .columns-grid,
+  .app-tabs {
     grid-template-columns: 1fr;
   }
 
