@@ -10,242 +10,381 @@
     <main class="shell">
       <section class="hero">
         <p class="eyebrow">Report generator</p>
-        <h1>CRM + PowerBI Report Dashboard</h1>
+        <h1>CRM Operations Dashboard</h1>
         <p>
-          Choose Program A or Program B, upload the required Excel files, and
-          generate the selected enriched workbook in the browser.
+          Switch between Report, Lead Splitter, and CR maker from the header.
+          Each tool accepts uploaded Excel files and generates downloadable
+          output in your browser.
         </p>
       </section>
 
-      <form id="report-form" class="card">
-        <fieldset>
-          <legend>Select program</legend>
-          <div class="program-grid">
-            <label class="program-card">
-              <input type="radio" name="program" value="program_a" checked />
-              <span>
-                <strong>Program A - CRM Output Report</strong>
-                <small>
-                  Combined CRM output sheet with status, call-attempt, and
-                  campaign pivots. Requires a manual pivot table name.
-                </small>
-              </span>
+      <section class="card compact tabs-card">
+        <div class="app-tabs" role="tablist" aria-label="App switcher">
+          <button class="app-tab is-active" type="button" data-app-tab="report">Report</button>
+          <button class="app-tab" type="button" data-app-tab="lead_splitter">Lead Splitter</button>
+          <button class="app-tab" type="button" data-app-tab="cr">CR</button>
+        </div>
+      </section>
+
+      <section class="app-panel is-active" data-app-panel="report">
+        <form id="report-form" class="card">
+          <input type="hidden" name="app" value="report" />
+          <fieldset>
+            <legend>Select program</legend>
+            <div class="program-grid">
+              <label class="program-card">
+                <input type="radio" name="program" value="program_a" checked />
+                <span>
+                  <strong>Program A - CRM Output Report</strong>
+                  <small>
+                    Combined CRM output sheet with status, call-attempt, and
+                    campaign pivots. Requires a manual pivot table name.
+                  </small>
+                </span>
+              </label>
+
+              <label class="program-card">
+                <input type="radio" name="program" value="program_b" />
+                <span>
+                  <strong>Program B - Country Split Report</strong>
+                  <small>
+                    Main Report sheet plus one country sheet per Country, with
+                    formula-linked country rows and centered pivots.
+                  </small>
+                </span>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>PowerBI report</legend>
+            <label>
+              Browse PowerBI .xlsx file
+              <input
+                type="file"
+                name="powerbi_report"
+                accept=".xlsx"
+                required
+              />
             </label>
 
-            <label class="program-card">
-              <input type="radio" name="program" value="program_b" />
-              <span>
-                <strong>Program B - Country Split Report</strong>
-                <small>
-                  Main Report sheet plus one country sheet per Country, with
-                  formula-linked country rows and centered pivots.
-                </small>
-              </span>
+            <label>
+              Sheet name
+              <span class="hint">Leave blank to use the active sheet.</span>
+              <input
+                type="text"
+                name="powerbi_sheet"
+                autocomplete="off"
+                placeholder="Example: Sheet1"
+              />
             </label>
+          </fieldset>
+
+          <fieldset id="pivot-fieldset">
+            <legend>Pivot</legend>
+            <label>
+              Pivot table name
+              <span id="pivot-hint" class="hint">
+                Required for Program A. Used as the label on the status pivot.
+              </span>
+              <input
+                id="pivot-name"
+                type="text"
+                name="pivot_name"
+                autocomplete="off"
+                placeholder="Example: Today's Lead Report"
+                required
+              />
+            </label>
+          </fieldset>
+
+          <fieldset>
+            <legend>CRM files</legend>
+            <p class="section-note">
+              Use up to four CRM files. For every CRM file you upload, enter the
+              platform name in the field directly beside it.
+            </p>
+
+            <input type="hidden" name="crm_count" value="4" />
+            <div class="crm-list">
+              <div class="crm-row">
+                <label>
+                  Browse CRM .xlsx file #1
+                  <input
+                    class="crm-file-input"
+                    type="file"
+                    name="crm_file_0"
+                    accept=".xlsx"
+                  />
+                </label>
+
+                <label>
+                  Platform name for CRM file #1
+                  <input
+                    class="platform-input"
+                    type="text"
+                    name="platform_0"
+                    autocomplete="off"
+                    placeholder="Example: BrandName"
+                  />
+                </label>
+              </div>
+
+              <div class="crm-row">
+                <label>
+                  Browse CRM .xlsx file #2
+                  <input
+                    class="crm-file-input"
+                    type="file"
+                    name="crm_file_1"
+                    accept=".xlsx"
+                  />
+                </label>
+
+                <label>
+                  Platform name for CRM file #2
+                  <input
+                    class="platform-input"
+                    type="text"
+                    name="platform_1"
+                    autocomplete="off"
+                    placeholder="Example: BrandName"
+                  />
+                </label>
+              </div>
+
+              <div class="crm-row">
+                <label>
+                  Browse CRM .xlsx file #3
+                  <input
+                    class="crm-file-input"
+                    type="file"
+                    name="crm_file_2"
+                    accept=".xlsx"
+                  />
+                </label>
+
+                <label>
+                  Platform name for CRM file #3
+                  <input
+                    class="platform-input"
+                    type="text"
+                    name="platform_2"
+                    autocomplete="off"
+                    placeholder="Example: BrandName"
+                  />
+                </label>
+              </div>
+
+              <div class="crm-row">
+                <label>
+                  Browse CRM .xlsx file #4
+                  <input
+                    class="crm-file-input"
+                    type="file"
+                    name="crm_file_3"
+                    accept=".xlsx"
+                  />
+                </label>
+
+                <label>
+                  Platform name for CRM file #4
+                  <input
+                    class="platform-input"
+                    type="text"
+                    name="platform_3"
+                    autocomplete="off"
+                    placeholder="Example: BrandName"
+                  />
+                </label>
+              </div>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Output settings</legend>
+            <label>
+              CRM sheet name for all CRM files
+              <span class="hint">Leave blank to use each file's active sheet.</span>
+              <input
+                type="text"
+                name="crm_sheet"
+                autocomplete="off"
+                placeholder="Example: Export"
+              />
+            </label>
+
+            <label>
+              Output file path / filename
+              <span id="output-hint" class="hint">
+                Leave blank for the selected program's default filename. In the
+                web app this is used as the downloaded filename.
+              </span>
+              <input
+                type="text"
+                name="output_file"
+                autocomplete="off"
+                id="output-file"
+                placeholder="crm_powerbi_output.xlsx"
+              />
+            </label>
+          </fieldset>
+
+          <div class="actions">
+            <button id="submit-button" type="submit">Generate workbook</button>
+            <p id="status" role="status" aria-live="polite"></p>
           </div>
-        </fieldset>
+        </form>
 
-        <fieldset>
-          <legend>PowerBI report</legend>
-          <label>
-            Browse PowerBI .xlsx file
-            <input
-              type="file"
-              name="powerbi_report"
-              accept=".xlsx"
-              required
-            />
-          </label>
+        <section class="card compact">
+          <h2>Required spreadsheet columns</h2>
+          <div class="columns-grid">
+            <div>
+              <h3>CRM files</h3>
+              <p>
+                Customer Type, ID, Created, Name, Department, Status, Country,
+                Campaign, Sub-Campaign, Placement, Assigned to
+              </p>
+            </div>
+            <div>
+              <h3>PowerBI report</h3>
+              <p>
+                Account No, Brand, Last 10 Comments, Voip Calls Attempts Cnt
+              </p>
+            </div>
+          </div>
+        </section>
+      </section>
 
-          <label>
-            Sheet name
-            <span class="hint">Leave blank to use the active sheet.</span>
-            <input
-              type="text"
-              name="powerbi_sheet"
-              autocomplete="off"
-              placeholder="Example: Sheet1"
-            />
-          </label>
-        </fieldset>
+      <section class="app-panel" data-app-panel="lead_splitter">
+        <form id="lead-form" class="card">
+          <input type="hidden" name="app" value="lead_splitter" />
+          <fieldset>
+            <legend>Lead splitter input</legend>
+            <label>
+              Browse source .xlsx file
+              <input type="file" name="lead_input" accept=".xlsx" required />
+            </label>
+          </fieldset>
 
-        <fieldset id="pivot-fieldset">
-          <legend>Pivot</legend>
-          <label>
-            Pivot table name
-            <span id="pivot-hint" class="hint">
-              Required for Program A. Used as the label on the status pivot.
-            </span>
-            <input
-              id="pivot-name"
-              type="text"
-              name="pivot_name"
-              autocomplete="off"
-              placeholder="Example: Today's Lead Report"
-              required
-            />
-          </label>
-        </fieldset>
+          <fieldset>
+            <legend>Output settings</legend>
+            <label>
+              Lead Splitter workbook filename
+              <span class="hint">
+                Leave blank to use the script default (Lead Splitter - DD-MM.xlsx).
+              </span>
+              <input
+                type="text"
+                name="lead_output_file"
+                autocomplete="off"
+                placeholder="Lead Splitter - 20-05.xlsx"
+              />
+            </label>
+            <label>
+              AFF workbook filename
+              <span class="hint">
+                Leave blank to use the script default. This file is included in the ZIP when generated.
+              </span>
+              <input
+                type="text"
+                name="aff_output_file"
+                autocomplete="off"
+                placeholder="AFF BY status- SG - CH - GCC - 20-05.xlsx"
+              />
+            </label>
+            <label>
+              ZIP download filename
+              <span class="hint">
+                Lead Splitter exports multiple files, so the browser download is a ZIP.
+              </span>
+              <input
+                type="text"
+                name="lead_bundle_file"
+                autocomplete="off"
+                placeholder="lead_splitter_outputs.zip"
+              />
+            </label>
+          </fieldset>
 
-        <fieldset>
-          <legend>CRM files</legend>
+          <div class="actions">
+            <button id="lead-submit-button" type="submit">Generate lead files</button>
+            <p id="lead-status" class="status-line" role="status" aria-live="polite"></p>
+          </div>
+        </form>
+
+        <section class="card compact">
+          <h2>Lead Splitter notes</h2>
           <p class="section-note">
-            Use up to four CRM files. For every CRM file you upload, enter the
-            platform name in the field directly beside it.
+            Upload the same report workbook used by the original Python script.
+            The generated ZIP can include the Lead Splitter output and the AFF by
+            Status workbook.
           </p>
+        </section>
+      </section>
 
-          <input type="hidden" name="crm_count" value="4" />
-          <div class="crm-list">
-            <div class="crm-row">
-              <label>
-                Browse CRM .xlsx file #1
-                <input
-                  class="crm-file-input"
-                  type="file"
-                  name="crm_file_0"
-                  accept=".xlsx"
-                />
-              </label>
+      <section class="app-panel" data-app-panel="cr">
+        <form id="cr-form" class="card">
+          <input type="hidden" name="app" value="cr" />
+          <fieldset>
+            <legend>CR maker input</legend>
+            <label>
+              Browse source .xlsx file
+              <input type="file" name="cr_input" accept=".xlsx" required />
+            </label>
+          </fieldset>
 
-              <label>
-                Platform name for CRM file #1
-                <input
-                  class="platform-input"
-                  type="text"
-                  name="platform_0"
-                  autocomplete="off"
-                  placeholder="Example: BrandName"
-                />
-              </label>
-            </div>
+          <fieldset>
+            <legend>Output settings</legend>
+            <label>
+              CR output filename
+              <span class="hint">
+                Leave blank to use the script default (CR data D-M.xlsx).
+              </span>
+              <input
+                type="text"
+                name="cr_output_file"
+                autocomplete="off"
+                placeholder="CR data 19-5.xlsx"
+              />
+            </label>
+          </fieldset>
 
-            <div class="crm-row">
-              <label>
-                Browse CRM .xlsx file #2
-                <input
-                  class="crm-file-input"
-                  type="file"
-                  name="crm_file_1"
-                  accept=".xlsx"
-                />
-              </label>
-
-              <label>
-                Platform name for CRM file #2
-                <input
-                  class="platform-input"
-                  type="text"
-                  name="platform_1"
-                  autocomplete="off"
-                  placeholder="Example: BrandName"
-                />
-              </label>
-            </div>
-
-            <div class="crm-row">
-              <label>
-                Browse CRM .xlsx file #3
-                <input
-                  class="crm-file-input"
-                  type="file"
-                  name="crm_file_2"
-                  accept=".xlsx"
-                />
-              </label>
-
-              <label>
-                Platform name for CRM file #3
-                <input
-                  class="platform-input"
-                  type="text"
-                  name="platform_2"
-                  autocomplete="off"
-                  placeholder="Example: BrandName"
-                />
-              </label>
-            </div>
-
-            <div class="crm-row">
-              <label>
-                Browse CRM .xlsx file #4
-                <input
-                  class="crm-file-input"
-                  type="file"
-                  name="crm_file_3"
-                  accept=".xlsx"
-                />
-              </label>
-
-              <label>
-                Platform name for CRM file #4
-                <input
-                  class="platform-input"
-                  type="text"
-                  name="platform_3"
-                  autocomplete="off"
-                  placeholder="Example: BrandName"
-                />
-              </label>
-            </div>
+          <div class="actions">
+            <button id="cr-submit-button" type="submit">Generate CR file</button>
+            <p id="cr-status" class="status-line" role="status" aria-live="polite"></p>
           </div>
-        </fieldset>
+        </form>
 
-        <fieldset>
-          <legend>Output settings</legend>
-          <label>
-            CRM sheet name for all CRM files
-            <span class="hint">Leave blank to use each file's active sheet.</span>
-            <input
-              type="text"
-              name="crm_sheet"
-              autocomplete="off"
-              placeholder="Example: Export"
-            />
-          </label>
-
-          <label>
-            Output file path / filename
-            <span id="output-hint" class="hint">
-              Leave blank for the selected program's default filename. In the
-              web app this is used as the downloaded filename.
-            </span>
-            <input
-              type="text"
-              name="output_file"
-              autocomplete="off"
-              id="output-file"
-              placeholder="crm_powerbi_output.xlsx"
-            />
-          </label>
-        </fieldset>
-
-        <div class="actions">
-          <button id="submit-button" type="submit">Generate workbook</button>
-          <p id="status" role="status" aria-live="polite"></p>
-        </div>
-      </form>
-
-      <section class="card compact">
-        <h2>Required spreadsheet columns</h2>
-        <div class="columns-grid">
-          <div>
-            <h3>CRM files</h3>
-            <p>
-              Customer Type, ID, Created, Name, Department, Status, Country,
-              Campaign, Sub-Campaign, Placement, Assigned to
-            </p>
-          </div>
-          <div>
-            <h3>PowerBI report</h3>
-            <p>
-              Account No, Brand, Last 10 Comments, Voip Calls Attempts Cnt
-            </p>
-          </div>
-        </div>
+        <section class="card compact">
+          <h2>CR maker notes</h2>
+          <p class="section-note">
+            Upload the workbook that the CR maker script expects; the generated
+            CR output workbook will download directly.
+          </p>
+        </section>
       </section>
     </main>
 
     <script>
+      const tabButtons = [...document.querySelectorAll(".app-tab")];
+      const appPanels = [...document.querySelectorAll(".app-panel")];
+
+      function activateTab(appKey) {
+        tabButtons.forEach((button) => {
+          button.classList.toggle("is-active", button.dataset.appTab === appKey);
+        });
+        appPanels.forEach((panel) => {
+          panel.classList.toggle("is-active", panel.dataset.appPanel === appKey);
+        });
+      }
+
+      tabButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          activateTab(button.dataset.appTab);
+        });
+      });
+
       const form = document.querySelector("#report-form");
       const crmRows = [...document.querySelectorAll(".crm-row")];
       const programInputs = [...document.querySelectorAll('input[name="program"]')];
@@ -280,6 +419,11 @@
       function setStatus(message, type = "") {
         statusEl.textContent = message;
         statusEl.className = type;
+      }
+
+      function setGenericStatus(element, message, type = "") {
+        element.textContent = message;
+        element.className = `status-line ${type}`.trim();
       }
 
       function selectedProgram() {
@@ -398,7 +542,98 @@
         }
       });
 
+      const leadForm = document.querySelector("#lead-form");
+      const leadSubmitButton = document.querySelector("#lead-submit-button");
+      const leadStatus = document.querySelector("#lead-status");
+      const crForm = document.querySelector("#cr-form");
+      const crSubmitButton = document.querySelector("#cr-submit-button");
+      const crStatus = document.querySelector("#cr-status");
+
+      function filenameFromResponse(response, fallback) {
+        const disposition = response.headers.get("content-disposition");
+        const match = /filename="?([^";]+)"?/i.exec(disposition || "");
+        return match ? match[1] : fallback;
+      }
+
+      async function submitAndDownload({
+        formEl,
+        buttonEl,
+        statusEl,
+        pendingMessage,
+        successMessage,
+        fallbackFilename,
+      }) {
+        if (!formEl.reportValidity()) {
+          return;
+        }
+
+        buttonEl.disabled = true;
+        setGenericStatus(statusEl, pendingMessage, "pending");
+
+        try {
+          const response = await fetch("/api/generate", {
+            method: "POST",
+            body: new FormData(formEl),
+          });
+
+          if (!response.ok) {
+            let message = "Unable to generate the requested file.";
+            try {
+              const payload = await response.json();
+              if (payload.error) {
+                message = payload.error;
+              }
+            } catch {
+              message = await response.text();
+            }
+            throw new Error(message);
+          }
+
+          const blob = await response.blob();
+          const filename = filenameFromResponse(response, fallbackFilename);
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(url);
+
+          setGenericStatus(statusEl, successMessage, "success");
+        } catch (error) {
+          setGenericStatus(statusEl, error.message, "error");
+        } finally {
+          buttonEl.disabled = false;
+        }
+      }
+
+      leadForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        await submitAndDownload({
+          formEl: leadForm,
+          buttonEl: leadSubmitButton,
+          statusEl: leadStatus,
+          pendingMessage: "Uploading file and generating lead outputs...",
+          successMessage: "Done. Your lead splitter ZIP download has started.",
+          fallbackFilename: "lead_splitter_outputs.zip",
+        });
+      });
+
+      crForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        await submitAndDownload({
+          formEl: crForm,
+          buttonEl: crSubmitButton,
+          statusEl: crStatus,
+          pendingMessage: "Uploading file and generating CR workbook...",
+          successMessage: "Done. Your CR workbook download has started.",
+          fallbackFilename: "cr_output.xlsx",
+        });
+      });
+
       syncProgramFields();
+      activateTab("report");
     </script>
   </body>
 </html>

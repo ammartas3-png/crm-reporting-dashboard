@@ -81,6 +81,44 @@ h1 {
   box-shadow: none;
 }
 
+.tabs-card {
+  margin-bottom: 12px;
+  padding: 14px;
+}
+
+.app-tabs {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.app-tab {
+  background: #eef3ff;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  color: var(--primary);
+  font-weight: 800;
+  min-height: 48px;
+}
+
+.app-tab:hover {
+  background: #e4ecff;
+}
+
+.app-tab.is-active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.app-panel {
+  display: none;
+}
+
+.app-panel.is-active {
+  display: block;
+}
+
 fieldset {
   border: 1px solid var(--border);
   border-radius: 18px;
@@ -271,6 +309,24 @@ button.danger:hover:not(:disabled) {
   color: var(--danger);
 }
 
+.status-line {
+  color: var(--muted);
+  font-weight: 700;
+  margin: 0;
+}
+
+.status-line.pending {
+  color: var(--primary);
+}
+
+.status-line.success {
+  color: var(--success);
+}
+
+.status-line.error {
+  color: var(--danger);
+}
+
 .columns-grid {
   display: grid;
   gap: 18px;
@@ -296,7 +352,8 @@ button.danger:hover:not(:disabled) {
 
   .crm-row,
   .program-grid,
-  .columns-grid {
+  .columns-grid,
+  .app-tabs {
     grid-template-columns: 1fr;
   }
 
