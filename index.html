@@ -26,6 +26,18 @@
       </section>
 
       <section class="app-panel is-active" data-app-panel="report">
+        <div class="dashboard-alerts">
+          <p class="dashboard-alert info-alert">
+            This report only works with the 10 Last Comments exported file from
+            PowerBI.
+          </p>
+          <p class="dashboard-alert warning-alert">
+            Warning: Be careful about heavy reports done by the program. After
+            doing one, please check the report; the app may have some mistakes
+            on big files.
+          </p>
+        </div>
+
         <form id="report-form" class="card">
           <input type="hidden" name="app" value="report" />
           <fieldset>
@@ -34,7 +46,7 @@
               <label class="program-card">
                 <input type="radio" name="program" value="program_a" checked />
                 <span>
-                  <strong>Program A - CRM Output Report</strong>
+                  <strong>Report Generator</strong>
                   <small>
                     Combined CRM output sheet with status, call-attempt, and
                     campaign pivots. Requires a manual pivot table name.
@@ -45,10 +57,11 @@
               <label class="program-card">
                 <input type="radio" name="program" value="program_b" />
                 <span>
-                  <strong>Program B - Country Split Report</strong>
+                  <strong>Bulk Country Reports (M-inhousemedia report etc.)</strong>
                   <small>
-                    Main Report sheet plus one country sheet per Country, with
-                    formula-linked country rows and centered pivots.
+                    Generate bulk country reports with a Main Report sheet plus
+                    one sheet per Country, formula-linked country rows, and
+                    centered pivots.
                   </small>
                 </span>
               </label>
@@ -66,25 +79,14 @@
                 required
               />
             </label>
-
-            <label>
-              Sheet name
-              <span class="hint">Leave blank to use the active sheet.</span>
-              <input
-                type="text"
-                name="powerbi_sheet"
-                autocomplete="off"
-                placeholder="Example: Sheet1"
-              />
-            </label>
           </fieldset>
 
           <fieldset id="pivot-fieldset">
             <legend>Pivot</legend>
             <label>
               Pivot table name
-              <span id="pivot-hint" class="hint">
-                Required for Program A. Used as the label on the status pivot.
+              <span id="pivot-hint" class="hint important-hint">
+                Choose the name of the Status pivot table included in the report sheet
               </span>
               <input
                 id="pivot-name"
@@ -100,119 +102,23 @@
           <fieldset>
             <legend>CRM files</legend>
             <p class="section-note">
-              Use up to four CRM files. For every CRM file you upload, enter the
-              platform name in the field directly beside it.
+              Start with one CRM file. Use the + button to add more CRM files when
+              you need reports for additional brands.
+            </p>
+            <p class="format-note">
+              Note: only Excel .xlsx files are supported. Do not upload CSV, PDF,
+              images, or any other file format.
             </p>
 
-            <input type="hidden" name="crm_count" value="4" />
-            <div class="crm-list">
-              <div class="crm-row">
-                <label>
-                  Browse CRM .xlsx file #1
-                  <input
-                    class="crm-file-input"
-                    type="file"
-                    name="crm_file_0"
-                    accept=".xlsx"
-                  />
-                </label>
-
-                <label>
-                  Platform name for CRM file #1
-                  <input
-                    class="platform-input"
-                    type="text"
-                    name="platform_0"
-                    autocomplete="off"
-                    placeholder="Example: BrandName"
-                  />
-                </label>
-              </div>
-
-              <div class="crm-row">
-                <label>
-                  Browse CRM .xlsx file #2
-                  <input
-                    class="crm-file-input"
-                    type="file"
-                    name="crm_file_1"
-                    accept=".xlsx"
-                  />
-                </label>
-
-                <label>
-                  Platform name for CRM file #2
-                  <input
-                    class="platform-input"
-                    type="text"
-                    name="platform_1"
-                    autocomplete="off"
-                    placeholder="Example: BrandName"
-                  />
-                </label>
-              </div>
-
-              <div class="crm-row">
-                <label>
-                  Browse CRM .xlsx file #3
-                  <input
-                    class="crm-file-input"
-                    type="file"
-                    name="crm_file_2"
-                    accept=".xlsx"
-                  />
-                </label>
-
-                <label>
-                  Platform name for CRM file #3
-                  <input
-                    class="platform-input"
-                    type="text"
-                    name="platform_2"
-                    autocomplete="off"
-                    placeholder="Example: BrandName"
-                  />
-                </label>
-              </div>
-
-              <div class="crm-row">
-                <label>
-                  Browse CRM .xlsx file #4
-                  <input
-                    class="crm-file-input"
-                    type="file"
-                    name="crm_file_3"
-                    accept=".xlsx"
-                  />
-                </label>
-
-                <label>
-                  Platform name for CRM file #4
-                  <input
-                    class="platform-input"
-                    type="text"
-                    name="platform_3"
-                    autocomplete="off"
-                    placeholder="Example: BrandName"
-                  />
-                </label>
-              </div>
-            </div>
+            <input id="crm-count" type="hidden" name="crm_count" value="1" />
+            <div id="crm-list" class="crm-list"></div>
+            <button id="add-crm-file" class="secondary add-crm-file" type="button">
+              + Add CRM file
+            </button>
           </fieldset>
 
           <fieldset>
             <legend>Output settings</legend>
-            <label>
-              CRM sheet name for all CRM files
-              <span class="hint">Leave blank to use each file's active sheet.</span>
-              <input
-                type="text"
-                name="crm_sheet"
-                autocomplete="off"
-                placeholder="Example: Export"
-              />
-            </label>
-
             <label>
               Output file path / filename
               <span id="output-hint" class="hint">
@@ -229,11 +135,58 @@
             </label>
           </fieldset>
 
+          <div class="submit-warning">
+            <strong>Please read the whole report carefully.</strong>
+            <ul>
+              <li>
+                Pay attention: some comments are colored yellow, which means they
+                do not exist on PowerBI, so they have to be put manually.
+              </li>
+              <li>
+                Real Call Back statuses and Telemarketing KYCs should be done
+                manually.
+              </li>
+              <li>
+                Check the comments to see if you need to change the status of the
+                lead.
+              </li>
+              <li>
+                Be careful to remove any secret password from the comments as well.
+              </li>
+            </ul>
+          </div>
+
           <div class="actions">
             <button id="submit-button" type="submit">Generate workbook</button>
             <p id="status" role="status" aria-live="polite"></p>
           </div>
         </form>
+
+        <template id="crm-row-template">
+          <div class="crm-row">
+            <label>
+              <span class="crm-file-label">Browse CRM .xlsx file #1</span>
+              <input class="crm-file-input" type="file" accept=".xlsx" />
+            </label>
+
+            <label>
+              <span class="platform-label">Platform name for CRM file #1</span>
+              <select class="platform-input">
+                <option value="">Select platform</option>
+                <option value="Fintana">Fintana</option>
+                <option value="Riverquode">Riverquode</option>
+                <option value="Mirrox">Mirrox</option>
+                <option value="Savexa">Savexa</option>
+                <option value="Spova">Spova</option>
+                <option value="Modmount">Modmount</option>
+                <option value="Skadeva">Skadeva</option>
+                <option value="Fxnovus">Fxnovus</option>
+              </select>
+            </label>
+
+            <button class="remove-crm-file danger" type="button">Remove</button>
+          </div>
+        </template>
 
         <section class="card compact">
           <h2>Required spreadsheet columns</h2>
@@ -322,7 +275,10 @@
       });
 
       const form = document.querySelector("#report-form");
-      const crmRows = [...document.querySelectorAll(".crm-row")];
+      const crmList = document.querySelector("#crm-list");
+      const crmCount = document.querySelector("#crm-count");
+      const crmRowTemplate = document.querySelector("#crm-row-template");
+      const addCrmFileButton = document.querySelector("#add-crm-file");
       const programInputs = [...document.querySelectorAll('input[name="program"]')];
       const submitButton = document.querySelector("#submit-button");
       const statusEl = document.querySelector("#status");
@@ -337,18 +293,18 @@
           fallbackDownload: "crm_powerbi_output.xlsx",
           pivotRequired: true,
           pivotHint:
-            "Required for Program A. Used as the label on the status pivot.",
+            "Choose the name of the Status pivot table included in the report sheet",
           outputHint:
-            "Leave blank for crm_powerbi_output.xlsx. In the web app this is used as the downloaded filename.",
+            "Choose a name for your file or leave the field blank for crm_powerbi_output.xlsx.",
         },
         program_b: {
           output: "crm_country_report.xlsx",
           fallbackDownload: "crm_country_report.xlsx",
           pivotRequired: false,
           pivotHint:
-            "Program B uses fixed workbook labels: Main Report uses M-Inhousemedia and country sheets use country names.",
+            "Bulk Country Reports uses fixed workbook labels: Main Report uses M-Inhousemedia and country sheets use country names.",
           outputHint:
-            "Leave blank for crm_country_report.xlsx. In the web app this is used as the downloaded filename.",
+            "Choose a name for your file or leave the field blank for crm_country_report.xlsx.",
         },
       };
 
@@ -374,10 +330,50 @@
         outputHint.textContent = config.outputHint;
       }
 
+      function crmRows() {
+        return [...crmList.querySelectorAll(".crm-row")];
+      }
+
+      function updateCrmRowIndexes() {
+        const rows = crmRows();
+
+        rows.forEach((row, index) => {
+          const displayIndex = index + 1;
+          row.querySelector(".crm-file-label").textContent =
+            `Browse CRM .xlsx file #${displayIndex}`;
+          row.querySelector(".platform-label").textContent =
+            `Platform name for CRM file #${displayIndex}`;
+          row.querySelector(".crm-file-input").name = `crm_file_${index}`;
+          row.querySelector(".platform-input").name = `platform_${index}`;
+
+          const removeButton = row.querySelector(".remove-crm-file");
+          removeButton.hidden = rows.length === 1;
+          removeButton.disabled = rows.length === 1;
+        });
+
+        crmCount.value = String(rows.length);
+      }
+
+      function addCrmRow() {
+        const fragment = crmRowTemplate.content.cloneNode(true);
+        const row = fragment.querySelector(".crm-row");
+        row.querySelector(".crm-file-input").addEventListener("change", validateCrmRows);
+        row.querySelector(".platform-input").addEventListener("change", validateCrmRows);
+        row.querySelector(".remove-crm-file").addEventListener("click", () => {
+          row.remove();
+          updateCrmRowIndexes();
+          validateCrmRows();
+        });
+        crmList.appendChild(fragment);
+        updateCrmRowIndexes();
+        validateCrmRows();
+      }
+
       function validateCrmRows() {
         let uploadedCount = 0;
+        const rows = crmRows();
 
-        crmRows.forEach((row) => {
+        rows.forEach((row) => {
           const fileInput = row.querySelector(".crm-file-input");
           const platformInput = row.querySelector(".platform-input");
           const hasFile = fileInput.files.length > 0;
@@ -403,8 +399,8 @@
           }
         });
 
-        if (uploadedCount === 0) {
-          crmRows[0]
+        if (uploadedCount === 0 && rows.length > 0) {
+          rows[0]
             .querySelector(".crm-file-input")
             .setCustomValidity("Browse and select at least one CRM .xlsx file.");
         }
@@ -421,14 +417,12 @@
         input.addEventListener("change", syncProgramFields);
       });
 
-      crmRows.forEach((row) => {
-        row.querySelector(".crm-file-input").addEventListener("change", validateCrmRows);
-        row.querySelector(".platform-input").addEventListener("input", validateCrmRows);
-      });
+      addCrmFileButton.addEventListener("click", addCrmRow);
 
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         syncProgramFields();
+        updateCrmRowIndexes();
         validateCrmRows();
 
         if (!form.reportValidity()) {
@@ -436,6 +430,7 @@
         }
 
         submitButton.disabled = true;
+        addCrmFileButton.disabled = true;
         setStatus("Uploading files and generating workbook...", "pending");
 
         try {
@@ -474,6 +469,7 @@
           setStatus(error.message, "error");
         } finally {
           submitButton.disabled = false;
+          addCrmFileButton.disabled = false;
           validateCrmRows();
         }
       });
@@ -574,6 +570,7 @@
       });
 
       syncProgramFields();
+      addCrmRow();
       activateTab("report");
     </script>
   </body>
