@@ -3,17 +3,17 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>CRM + PowerBI Report Dashboard</title>
+    <title>CRM Report Assistant</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <main class="shell">
       <section class="hero">
         <p class="eyebrow">Report generator</p>
-        <h1>CRM + PowerBI Report Dashboard</h1>
+        <h1>CRM Report Assistant</h1>
         <p>
-          Choose Program A or Program B, upload the required Excel files, and
-          generate the selected enriched workbook in the browser.
+          An assistant helping to speed up the process of making reports choose
+          which report you want to make
         </p>
       </section>
 
@@ -266,46 +266,6 @@
             </label>
           </fieldset>
 
-          <fieldset>
-            <legend>Output settings</legend>
-            <label>
-              Lead Splitter workbook filename
-              <span class="hint">
-                Leave blank to use the script default (Lead Splitter - DD-MM.xlsx).
-              </span>
-              <input
-                type="text"
-                name="lead_output_file"
-                autocomplete="off"
-                placeholder="Lead Splitter - 20-05.xlsx"
-              />
-            </label>
-            <label>
-              AFF workbook filename
-              <span class="hint">
-                Leave blank to use the script default. This file is included in the ZIP when generated.
-              </span>
-              <input
-                type="text"
-                name="aff_output_file"
-                autocomplete="off"
-                placeholder="AFF BY status- SG - CH - GCC - 20-05.xlsx"
-              />
-            </label>
-            <label>
-              ZIP download filename
-              <span class="hint">
-                Lead Splitter exports multiple files, so the browser download is a ZIP.
-              </span>
-              <input
-                type="text"
-                name="lead_bundle_file"
-                autocomplete="off"
-                placeholder="lead_splitter_outputs.zip"
-              />
-            </label>
-          </fieldset>
-
           <div class="actions">
             <button id="lead-submit-button" type="submit">Generate lead files</button>
             <p id="lead-status" class="status-line" role="status" aria-live="polite"></p>
@@ -314,11 +274,7 @@
 
         <section class="card compact">
           <h2>Lead Splitter notes</h2>
-          <p class="section-note">
-            Upload the same report workbook used by the original Python script.
-            The generated ZIP can include the Lead Splitter output and the AFF by
-            Status workbook.
-          </p>
+          <p class="section-note">Export the powerBI lead splitter file and upload it here</p>
         </section>
       </section>
 
@@ -333,22 +289,6 @@
             </label>
           </fieldset>
 
-          <fieldset>
-            <legend>Output settings</legend>
-            <label>
-              CR output filename
-              <span class="hint">
-                Leave blank to use the script default (CR data D-M.xlsx).
-              </span>
-              <input
-                type="text"
-                name="cr_output_file"
-                autocomplete="off"
-                placeholder="CR data 19-5.xlsx"
-              />
-            </label>
-          </fieldset>
-
           <div class="actions">
             <button id="cr-submit-button" type="submit">Generate CR file</button>
             <p id="cr-status" class="status-line" role="status" aria-live="polite"></p>
@@ -357,10 +297,7 @@
 
         <section class="card compact">
           <h2>CR maker notes</h2>
-          <p class="section-note">
-            Upload the workbook that the CR maker script expects; the generated
-            CR output workbook will download directly.
-          </p>
+          <p class="section-note">Export the PowerBI Traffic exported file and upload it here</p>
         </section>
       </section>
     </main>
@@ -554,25 +491,15 @@
         return match ? match[1] : fallback;
       }
 
-      async function submitAndDownload({
-        formEl,
-        buttonEl,
-        statusEl,
-        pendingMessage,
-        successMessage,
-        fallbackFilename,
-      }) {
-        if (!formEl.reportValidity()) {
-          return;
-        }
-
-        buttonEl.disabled = true;
-        setGenericStatus(statusEl, pendingMessage, "pending");
-
+      async function requestDownload(formEl, fallbackFilename, extraFields = {}) {
+        const formData = new FormData(formEl);
+        Object.entries(extraFields).forEach(([key, value]) => {
+          formData.set(key, value);
+        });
         try {
           const response = await fetch("/api/generate", {
             method: "POST",
-            body: new FormData(formEl),
+            body: formData,
           });
 
           if (!response.ok) {
@@ -598,37 +525,52 @@
           link.click();
           link.remove();
           URL.revokeObjectURL(url);
-
-          setGenericStatus(statusEl, successMessage, "success");
         } catch (error) {
-          setGenericStatus(statusEl, error.message, "error");
-        } finally {
-          buttonEl.disabled = false;
+          throw error;
         }
       }
 
       leadForm.addEventListener("submit", async (event) => {
         event.preventDefault();
-        await submitAndDownload({
-          formEl: leadForm,
-          buttonEl: leadSubmitButton,
-          statusEl: leadStatus,
-          pendingMessage: "Uploading file and generating lead outputs...",
-          successMessage: "Done. Your lead splitter ZIP download has started.",
-          fallbackFilename: "lead_splitter_outputs.zip",
-        });
+        if (!leadForm.reportValidity()) {
+          return;
+        }
+
+        leadSubmitButton.disabled = true;
+        setGenericStatus(leadStatus, "Uploading file and generating lead outputs...", "pending");
+
+        try {
+          await requestDownload(leadForm, "Lead Splitter.xlsx", { lead_kind: "lead" });
+          await requestDownload(leadForm, "AFF by Status.xlsx", { lead_kind: "aff" });
+          setGenericStatus(
+            leadStatus,
+            "Done. Two XLSX downloads have started.",
+            "success",
+          );
+        } catch (error) {
+          setGenericStatus(leadStatus, error.message, "error");
+        } finally {
+          leadSubmitButton.disabled = false;
+        }
       });
 
       crForm.addEventListener("submit", async (event) => {
         event.preventDefault();
-        await submitAndDownload({
-          formEl: crForm,
-          buttonEl: crSubmitButton,
-          statusEl: crStatus,
-          pendingMessage: "Uploading file and generating CR workbook...",
-          successMessage: "Done. Your CR workbook download has started.",
-          fallbackFilename: "cr_output.xlsx",
-        });
+        if (!crForm.reportValidity()) {
+          return;
+        }
+
+        crSubmitButton.disabled = true;
+        setGenericStatus(crStatus, "Uploading file and generating CR workbook...", "pending");
+
+        try {
+          await requestDownload(crForm, "CR output.xlsx");
+          setGenericStatus(crStatus, "Done. Your CR workbook download has started.", "success");
+        } catch (error) {
+          setGenericStatus(crStatus, error.message, "error");
+        } finally {
+          crSubmitButton.disabled = false;
+        }
       });
 
       syncProgramFields();

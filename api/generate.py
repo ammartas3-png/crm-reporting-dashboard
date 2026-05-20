@@ -7,7 +7,6 @@ import json
 import re
 import sys
 import tempfile
-import zipfile
 from email.message import Message
 from http.server import BaseHTTPRequestHandler
 from io import BytesIO
@@ -31,7 +30,6 @@ PROGRAM_A = "program_a"
 PROGRAM_B = "program_b"
 PROGRAM_A_OUTPUT_FILENAME = "crm_powerbi_output.xlsx"
 PROGRAM_B_OUTPUT_FILENAME = "crm_country_report.xlsx"
-LEAD_ZIP_FILENAME = "lead_splitter_outputs.zip"
 MAX_UPLOAD_BYTES = 45 * 1024 * 1024
 XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -78,13 +76,6 @@ def _output_filename(raw_name: str, fallback: str) -> str:
     name = _safe_filename(raw_name, fallback)
     if not name.lower().endswith(".xlsx"):
         name = f"{name}.xlsx"
-    return name
-
-
-def _zip_filename(raw_name: str, fallback: str) -> str:
-    name = _safe_filename(raw_name, fallback)
-    if not name.lower().endswith(".zip"):
-        name = f"{name}.zip"
     return name
 
 
@@ -269,46 +260,31 @@ class handler(BaseHTTPRequestHandler):
                         tmp_path,
                         "Lead splitter input file",
                     )
-                    lead_output_raw = _field_text(form, "lead_output_file")
-                    aff_output_raw = _field_text(form, "aff_output_file")
-
-                    lead_output_name = (
-                        _output_filename(lead_output_raw, "lead_splitter_output.xlsx")
-                        if lead_output_raw
-                        else None
-                    )
-                    aff_output_name = (
-                        _output_filename(aff_output_raw, "aff_by_status.xlsx")
-                        if aff_output_raw
-                        else None
-                    )
-
                     generated_paths = lead_splitter.build_outputs(
                         input_path=lead_input,
                         output_dir=tmp_path,
-                        lead_output_name=lead_output_name,
-                        aff_output_name=aff_output_name,
                     )
-                    response_filename = _zip_filename(
-                        _field_text(form, "lead_bundle_file"),
-                        LEAD_ZIP_FILENAME,
-                    )
-                    zip_buffer = BytesIO()
-                    with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zip_file:
-                        for generated in generated_paths:
-                            zip_file.write(generated, arcname=generated.name)
-                    response_bytes = zip_buffer.getvalue()
-                    response_content_type = "application/zip"
+                    lead_kind = (_field_text(form, "lead_kind") or "lead").lower()
+                    if lead_kind == "lead":
+                        selected_output = generated_paths[0]
+                    elif lead_kind == "aff":
+                        if len(generated_paths) < 2:
+                            raise ValueError(
+                                "AFF by Status output was not generated from this input."
+                            )
+                        selected_output = generated_paths[1]
+                    else:
+                        raise ValueError("Invalid Lead Splitter output type requested.")
+                    response_filename = selected_output.name
+                    response_bytes = selected_output.read_bytes()
+                    response_content_type = XLSX_CONTENT_TYPE
                 else:
                     cr_input = _save_upload(
                         _field(form, "cr_input"),
                         tmp_path,
                         "CR input file",
                     )
-                    response_filename = _output_filename(
-                        _field_text(form, "cr_output_file"),
-                        cr_maker.default_output_filename(),
-                    )
+                    response_filename = cr_maker.default_output_filename()
                     cr_output_path = tmp_path / response_filename
                     cr_maker.process(cr_input, cr_output_path)
                     response_bytes = cr_output_path.read_bytes()
