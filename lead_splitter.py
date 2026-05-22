@@ -52,6 +52,7 @@ NAME_FIXES = {
     "Syahmi Ra": "Syahmi Rah",
     "Rahma Far": "Rahma Fa",
     "Dilan. Ka": "Dilan Ka",
+    "Muhammet Yı": "Muhammet Yi",
 }
 
 MY_EXEMPT_AGENTS = {
