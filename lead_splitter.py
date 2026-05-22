@@ -172,7 +172,8 @@ def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col) -> None:
         Assigned=("_N1", "sum"), FTD=("_O1", "sum")
     ).reset_index()
     header_fill = PatternFill("solid", start_color="1F4E79", end_color="1F4E79")
-    total_fill = PatternFill("solid", start_color="D9EAF7", end_color="D9EAF7")
+    country_total_fill = PatternFill("solid", start_color="D9EAF7", end_color="D9EAF7")
+    desk_total_fill = PatternFill("solid", start_color="BDD7EE", end_color="BDD7EE")
     white_fill = PatternFill("solid", start_color="FFFFFF", end_color="FFFFFF")
     header_font = Font(bold=True, color="FFFFFF", name="Arial", size=10)
     bold_font = Font(bold=True, color="000000", name="Arial", size=10)
@@ -182,7 +183,7 @@ def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col) -> None:
     section_specs = {
         "left": {"start_col": 1, "country_header": "Country"},
         "middle": {"start_col": 8, "country_header": "Country"},
-        "right": {"start_col": 14, "country_header": "New Country"},
+        "right": {"start_col": 15, "country_header": "New Country"},
     }
     lane_rows = {lane: 2 for lane in section_specs}
 
@@ -206,9 +207,11 @@ def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col) -> None:
         ftd: int,
         *,
         is_total: bool = False,
+        total_fill: PatternFill | None = None,
     ) -> None:
         cr_value = (ftd / leads) if leads > 0 else 0
         values = [desk_val, country_val, agent_val, leads, ftd, cr_value]
+        row_fill = total_fill if is_total and total_fill is not None else white_fill
         for offset, value in enumerate(values):
             col_i = start_col + offset
             cell = ws.cell(row=row_i, column=col_i, value=value)
@@ -222,12 +225,10 @@ def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col) -> None:
             if offset == 5:
                 cell.number_format = "0%"
 
-            if is_total and offset <= 2:
-                cell.fill = total_fill
-            elif (not is_total) and offset == 5:
+            if (not is_total) and offset == 5:
                 cell.fill = _cr_fill_for_ratio(cr_value)
             else:
-                cell.fill = white_fill
+                cell.fill = row_fill
 
         ws.row_dimensions[row_i].height = 16
 
@@ -282,6 +283,7 @@ def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col) -> None:
                     country_assigned,
                     country_ftd,
                     is_total=True,
+                    total_fill=country_total_fill,
                 )
                 current_row += 1
 
@@ -296,6 +298,7 @@ def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col) -> None:
                 desk_assigned,
                 desk_ftd,
                 is_total=True,
+                total_fill=desk_total_fill,
             )
             current_row += 1
 
@@ -319,12 +322,13 @@ def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col) -> None:
         11: 8,
         12: 6,
         13: 6,
-        14: 12,
-        15: 22,
-        16: 17,
-        17: 8,
-        18: 6,
+        14: 3,
+        15: 12,
+        16: 22,
+        17: 17,
+        18: 8,
         19: 6,
+        20: 6,
     }
     for col_index, width in column_widths.items():
         ws.column_dimensions[get_column_letter(col_index)].width = width
