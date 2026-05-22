@@ -217,11 +217,13 @@
               Browse source .xlsx file
               <input type="file" name="lead_input" accept=".xlsx" required />
             </label>
-            <label>
-              Create AFF by Status file too
-              <span class="hint">Turn on to download both Lead Splitter and AFF outputs.</span>
-              <input id="lead-include-aff" type="checkbox" checked />
-            </label>
+            <div class="toggle-row">
+              <input id="lead-include-aff" class="toggle-input" type="checkbox" checked />
+              <label class="toggle-label" for="lead-include-aff">
+                <span class="toggle-switch" aria-hidden="true"></span>
+                <span>By affiliation</span>
+              </label>
+            </div>
           </fieldset>
 
           <div class="actions">
