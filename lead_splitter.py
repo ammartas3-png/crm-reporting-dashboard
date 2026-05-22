@@ -18,6 +18,7 @@ NAME_FIXES = {
     "Muhammed K": "Muhammed Ke",
     "Rissa RissaZa": "Rissa Za",
     "Nadia Ro": "Nadia R",
+    "Nadia R.": "Nadia R",
     "Aya C": "Aya Ca",
     "Ismail Alt": "Ismail Al",
     "Abrar Os": "Abrar O",
@@ -133,6 +134,32 @@ def get_office(desk) -> str:
     return str(desk)[:2].upper()
 
 
+def _pivot_lane_for_desk(desk_name: str) -> str:
+    desk_upper = str(desk_name or "").strip().upper()
+    if desk_upper.startswith("FR"):
+        return "right"
+    if desk_upper == "EN" or (desk_upper.startswith("EN") and desk_upper.endswith("SK")):
+        return "middle"
+    return "left"
+
+
+def _rgb_interp(start: tuple[int, int, int], end: tuple[int, int, int], t: float) -> str:
+    t = max(0.0, min(1.0, t))
+    r = round(start[0] + (end[0] - start[0]) * t)
+    g = round(start[1] + (end[1] - start[1]) * t)
+    b = round(start[2] + (end[2] - start[2]) * t)
+    return f"{r:02X}{g:02X}{b:02X}"
+
+
+def _cr_fill_for_ratio(cr_value: float) -> PatternFill:
+    # Mirror Excel-style red->yellow->green color scale.
+    if cr_value <= 0.1:
+        color = _rgb_interp((248, 105, 107), (255, 235, 132), cr_value / 0.1)
+    else:
+        color = _rgb_interp((255, 235, 132), (99, 190, 123), (cr_value - 0.1) / 0.1)
+    return PatternFill("solid", start_color=color, end_color=color)
+
+
 def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col) -> None:
     ws = wb.create_sheet("Pivot")
 
@@ -144,104 +171,163 @@ def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col) -> None:
     agg = df.groupby(["_DESK2", i_col, c_col], sort=True).agg(
         Assigned=("_N1", "sum"), FTD=("_O1", "sum")
     ).reset_index()
+    header_fill = PatternFill("solid", start_color="1F4E79", end_color="1F4E79")
+    total_fill = PatternFill("solid", start_color="D9EAF7", end_color="D9EAF7")
+    white_fill = PatternFill("solid", start_color="FFFFFF", end_color="FFFFFF")
+    header_font = Font(bold=True, color="FFFFFF", name="Arial", size=10)
+    bold_font = Font(bold=True, color="000000", name="Arial", size=10)
+    normal_font = Font(bold=False, color="000000", name="Arial", size=10)
+    black_border = make_border("000000")
 
-    fill_header = PatternFill("solid", start_color="17375E", end_color="17375E")
-    fill_desk_total = PatternFill("solid", start_color="BDD7EE", end_color="BDD7EE")
-    fill_country_total = PatternFill("solid", start_color="DEEAF1", end_color="DEEAF1")
-    fill_alt = PatternFill("solid", start_color="F5FBFF", end_color="F5FBFF")
-    font_header = Font(bold=True, color="FFFFFF", name="Arial", size=10)
-    font_bold = Font(bold=True, color="000000", name="Arial", size=10)
-    font_norm = Font(bold=False, color="000000", name="Arial", size=10)
-    border = make_border("C8C8C8")
+    section_specs = {
+        "left": {"start_col": 1, "country_header": "Country"},
+        "middle": {"start_col": 8, "country_header": "Country"},
+        "right": {"start_col": 14, "country_header": "New Country"},
+    }
+    lane_rows = {lane: 2 for lane in section_specs}
 
-    def write_row(row_i, desk_val, country_val, agent_val, assigned, ftd, font, fill):
-        cr = ftd / assigned if assigned > 0 else 0
-        values = [desk_val, country_val, agent_val, assigned, ftd, cr]
-        for col_i, val in enumerate(values, 1):
-            cell = ws.cell(row=row_i, column=col_i, value=val)
-            cell.font = font
-            cell.fill = fill
-            cell.border = border
-            if col_i <= 3:
+    def write_header(start_col: int, country_header: str) -> None:
+        headers = ["DESK", country_header, "Agent", "Leads", "FT", "CR"]
+        for offset, header in enumerate(headers):
+            cell = ws.cell(row=1, column=start_col + offset, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.border = black_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[1].height = 20
+
+    def write_row(
+        start_col: int,
+        row_i: int,
+        desk_val: str,
+        country_val: str,
+        agent_val: str,
+        leads: int,
+        ftd: int,
+        *,
+        is_total: bool = False,
+    ) -> None:
+        cr_value = (ftd / leads) if leads > 0 else 0
+        values = [desk_val, country_val, agent_val, leads, ftd, cr_value]
+        for offset, value in enumerate(values):
+            col_i = start_col + offset
+            cell = ws.cell(row=row_i, column=col_i, value=value)
+            cell.border = black_border
+            cell.font = bold_font if is_total else normal_font
+
+            if offset <= 2:
                 cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
             else:
                 cell.alignment = Alignment(horizontal="center", vertical="center")
-            if col_i == 6:
+            if offset == 5:
                 cell.number_format = "0%"
+
+            if is_total and offset <= 2:
+                cell.fill = total_fill
+            elif (not is_total) and offset == 5:
+                cell.fill = _cr_fill_for_ratio(cr_value)
+            else:
+                cell.fill = white_fill
+
         ws.row_dimensions[row_i].height = 16
 
-    for col_i, header in enumerate(
-        ["Desk", "Country", "Agent", "Assigned to", "FTD Count", "CR"], 1
-    ):
-        cell = ws.cell(row=1, column=col_i, value=header)
-        cell.font = font_header
-        cell.fill = fill_header
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        cell.border = make_border("0D2340")
-    ws.row_dimensions[1].height = 22
+    for lane_name, lane_spec in section_specs.items():
+        write_header(lane_spec["start_col"], lane_spec["country_header"])
 
-    cur_row = 2
-    for desk2, desk_df in agg.groupby("_DESK2", sort=True):
-        first_desk = True
-        country_totals = desk_df.groupby(i_col)["Assigned"].sum().sort_values(ascending=False)
-        country_order = country_totals.index.tolist()
+    desks = sorted(agg["_DESK2"].dropna().unique().tolist(), key=lambda x: str(x))
+    desks_by_lane: dict[str, list[str]] = {"left": [], "middle": [], "right": []}
+    for desk in desks:
+        desks_by_lane[_pivot_lane_for_desk(str(desk))].append(str(desk))
 
-        for country in country_order:
-            country_df = desk_df[desk_df[i_col] == country]
-            first_country = True
-            alt = 0
+    for lane_name, lane_desks in desks_by_lane.items():
+        start_col = section_specs[lane_name]["start_col"]
+        current_row = lane_rows[lane_name]
 
-            for _, row in country_df.iterrows():
-                desk_label = desk2 if first_desk else ""
-                country_label = country if first_country else ""
-                fill = fill_alt if alt % 2 == 0 else PatternFill(fill_type=None)
-                write_row(
-                    cur_row,
-                    desk_label,
-                    country_label,
-                    row[c_col],
-                    int(row["Assigned"]),
-                    int(row["FTD"]),
-                    font_norm,
-                    fill,
+        for desk_index, desk_name in enumerate(lane_desks):
+            desk_df = agg[agg["_DESK2"] == desk_name].copy()
+            country_totals = desk_df.groupby(i_col)["Assigned"].sum().sort_values(ascending=False)
+            country_order = country_totals.index.tolist()
+            first_desk_row = True
+
+            for country in country_order:
+                country_df = desk_df[desk_df[i_col] == country].copy()
+                country_df = country_df.sort_values(
+                    by=["Assigned", "FTD", c_col],
+                    ascending=[False, False, True],
                 )
-                first_desk = False
-                first_country = False
-                alt += 1
-                cur_row += 1
+                first_country_row = True
 
-            country_assigned = int(country_df["Assigned"].sum())
-            country_ftd = int(country_df["FTD"].sum())
+                for _, item in country_df.iterrows():
+                    write_row(
+                        start_col,
+                        current_row,
+                        desk_name if first_desk_row else "",
+                        str(country) if first_country_row else "",
+                        str(item[c_col]) if pd.notna(item[c_col]) else "",
+                        int(item["Assigned"]),
+                        int(item["FTD"]),
+                    )
+                    first_desk_row = False
+                    first_country_row = False
+                    current_row += 1
+
+                country_assigned = int(country_df["Assigned"].sum())
+                country_ftd = int(country_df["FTD"].sum())
+                write_row(
+                    start_col,
+                    current_row,
+                    "",
+                    f"{country} Total",
+                    "",
+                    country_assigned,
+                    country_ftd,
+                    is_total=True,
+                )
+                current_row += 1
+
+            desk_assigned = int(desk_df["Assigned"].sum())
+            desk_ftd = int(desk_df["FTD"].sum())
             write_row(
-                cur_row,
+                start_col,
+                current_row,
+                f"{desk_name} Total",
                 "",
-                f"{country} Total",
                 "",
-                country_assigned,
-                country_ftd,
-                font_bold,
-                fill_country_total,
+                desk_assigned,
+                desk_ftd,
+                is_total=True,
             )
-            cur_row += 1
+            current_row += 1
 
-        desk_assigned = int(desk_df["Assigned"].sum())
-        desk_ftd = int(desk_df["FTD"].sum())
-        write_row(
-            cur_row,
-            f"{desk2} Total",
-            "",
-            "",
-            desk_assigned,
-            desk_ftd,
-            font_bold,
-            fill_desk_total,
-        )
-        cur_row += 1
+            # Keep one fully empty separator row between desk blocks.
+            if desk_index < len(lane_desks) - 1:
+                current_row += 1
 
-    widths = {"A": 16, "B": 28, "C": 24, "D": 14, "E": 12, "F": 10}
-    for col_letter, width in widths.items():
-        ws.column_dimensions[col_letter].width = width
-    ws.freeze_panes = "D2"
+        lane_rows[lane_name] = current_row
+
+    column_widths = {
+        1: 12,
+        2: 22,
+        3: 17,
+        4: 8,
+        5: 6,
+        6: 6,
+        7: 3,
+        8: 12,
+        9: 22,
+        10: 17,
+        11: 8,
+        12: 6,
+        13: 6,
+        14: 12,
+        15: 22,
+        16: 17,
+        17: 8,
+        18: 6,
+        19: 6,
+    }
+    for col_index, width in column_widths.items():
+        ws.column_dimensions[get_column_letter(col_index)].width = width
 
 
 AFF_BORDER = make_border("C8C8C8")
