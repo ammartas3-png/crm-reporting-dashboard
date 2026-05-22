@@ -93,6 +93,10 @@ def _program_from_form(form: cgi.FieldStorage) -> str:
     return program
 
 
+def _is_truthy(value: str) -> bool:
+    return value.strip().casefold() in {"1", "true", "yes", "on"}
+
+
 def _save_upload(
     field: cgi.FieldStorage | None,
     directory: Path,
@@ -260,21 +264,30 @@ class handler(BaseHTTPRequestHandler):
                         tmp_path,
                         "Lead splitter input file",
                     )
-                    generated_paths = lead_splitter.build_outputs(
+                    lead_kind = (_field_text(form, "lead_kind") or "lead").lower()
+                    include_aff = _is_truthy(_field_text(form, "include_aff"))
+
+                    if lead_kind == "aff" and not include_aff:
+                        raise ValueError("AFF output was requested while AFF generation is disabled.")
+
+                    generated_outputs = lead_splitter.build_outputs(
                         input_path=lead_input,
                         output_dir=tmp_path,
+                        generate_lead=(lead_kind == "lead"),
+                        generate_aff=(lead_kind == "aff" and include_aff),
                     )
-                    lead_kind = (_field_text(form, "lead_kind") or "lead").lower()
                     if lead_kind == "lead":
-                        selected_output = generated_paths[0]
+                        selected_output = generated_outputs.get("lead")
                     elif lead_kind == "aff":
-                        if len(generated_paths) < 2:
+                        selected_output = generated_outputs.get("aff")
+                        if selected_output is None:
                             raise ValueError(
                                 "AFF by Status output was not generated from this input."
                             )
-                        selected_output = generated_paths[1]
                     else:
                         raise ValueError("Invalid Lead Splitter output type requested.")
+                    if selected_output is None:
+                        raise ValueError("Lead Splitter output was not generated from this input.")
                     response_filename = selected_output.name
                     response_bytes = selected_output.read_bytes()
                     response_content_type = XLSX_CONTENT_TYPE

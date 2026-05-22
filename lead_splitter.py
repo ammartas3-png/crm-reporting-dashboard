@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+from google.oauth2 import service_account
+from googleapiclient.discovery import build as build_google_service
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -97,10 +99,68 @@ GCC_COUNTRIES = {
     "Oman",
 }
 
+NAME_FIXES_SPREADSHEET_ID = "1wqF8cCsPI8jFcxQ-nwMRGzwvcxP-ynfJyOXGSJEhk-E"
+NAME_FIXES_SHEET_NAME = "Lead Splitter"
+NAME_FIXES_SERVICE_ACCOUNT_EMAIL = "matservice@mitservice.iam.gserviceaccount.com"
+NAME_FIXES_ENV_KEYS = ("gmail", "GMAIL", "GOOGLE_PRIVATE_KEY")
+
 
 def make_border(color: str = "D0D0D0") -> Border:
     side = Side(style="thin", color=color)
     return Border(left=side, right=side, top=side, bottom=side)
+
+
+def _get_google_private_key() -> str:
+    for env_key in NAME_FIXES_ENV_KEYS:
+        private_key = os.environ.get(env_key, "").strip()
+        if private_key:
+            return private_key.replace("\\n", "\n")
+    raise ValueError(
+        "Missing Google private key. Set environment variable 'gmail' with the service account private key."
+    )
+
+
+def load_name_fixes_from_sheet() -> dict[str, str]:
+    credentials_info = {
+        "type": "service_account",
+        "client_email": NAME_FIXES_SERVICE_ACCOUNT_EMAIL,
+        "private_key": _get_google_private_key(),
+        "token_uri": "https://oauth2.googleapis.com/token",
+    }
+    credentials = service_account.Credentials.from_service_account_info(
+        credentials_info,
+        scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"],
+    )
+    service = build_google_service(
+        "sheets",
+        "v4",
+        credentials=credentials,
+        cache_discovery=False,
+    )
+    response = (
+        service.spreadsheets()
+        .values()
+        .get(
+            spreadsheetId=NAME_FIXES_SPREADSHEET_ID,
+            range=f"{NAME_FIXES_SHEET_NAME}!A:B",
+        )
+        .execute()
+    )
+    rows = response.get("values", [])
+    if not rows:
+        return {}
+
+    header = [str(item).strip().casefold() for item in rows[0]]
+    wrong_idx = header.index("wrong names") if "wrong names" in header else 0
+    right_idx = header.index("right names") if "right names" in header else 1
+
+    fixes: dict[str, str] = {}
+    for row in rows[1:]:
+        wrong_name = row[wrong_idx].strip() if len(row) > wrong_idx else ""
+        right_name = row[right_idx].strip() if len(row) > right_idx else ""
+        if wrong_name and right_name:
+            fixes[wrong_name] = right_name
+    return fixes
 
 
 def clean_agent_name(name):
@@ -118,8 +178,8 @@ def is_pool_agent(name) -> bool:
     return clean.startswith("BI pool") or clean.startswith("Pool")
 
 
-def fix_name(name):
-    return NAME_FIXES.get(name, name)
+def fix_name(name, name_fixes: dict[str, str]):
+    return name_fixes.get(name, name)
 
 
 def get_desk2(desk) -> str:
@@ -638,12 +698,16 @@ def build_outputs(
     output_dir: Path,
     lead_output_name: str | None = None,
     aff_output_name: str | None = None,
-) -> list[Path]:
+    generate_lead: bool = True,
+    generate_aff: bool = True,
+) -> dict[str, Path]:
     today = datetime.now()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     lead_name = lead_output_name or f"Lead Splitter - {today.strftime('%d-%m')}.xlsx"
     lead_output_path = output_dir / lead_name
+
+    name_fixes = load_name_fixes_from_sheet()
 
     df = pd.read_excel(input_path, header=2, dtype=str)
     df.columns = [str(c) for c in df.columns]
@@ -685,7 +749,9 @@ def build_outputs(
 
     df = df.drop(index=rows_to_drop).copy()
     df = df[~df[c_col].apply(is_pool_agent)].copy()
-    df[c_col] = df[c_col].apply(clean_agent_name).apply(fix_name)
+    df[c_col] = df[c_col].apply(clean_agent_name).apply(
+        lambda value: fix_name(value, name_fixes)
+    )
 
     def update_desk(row):
         country = str(row[i_col]).strip() if pd.notna(row[i_col]) else ""
@@ -698,54 +764,58 @@ def build_outputs(
 
     df[b_col] = df.apply(update_desk, axis=1)
 
-    wb_orig = load_workbook(input_path, data_only=True)
-    ws_orig = wb_orig.active
-    header_row = [cell.value for cell in ws_orig[3]]
+    outputs: dict[str, Path] = {}
 
-    wb_new = Workbook()
-    ws_data = wb_new.active
-    ws_data.title = "Data"
-    ws_data.append(header_row)
+    if generate_lead:
+        wb_orig = load_workbook(input_path, data_only=True)
+        ws_orig = wb_orig.active
+        header_row = [cell.value for cell in ws_orig[3]]
 
-    hdr_fill = PatternFill("solid", start_color="1F4E79", end_color="1F4E79")
-    hdr_font = Font(bold=True, color="FFFFFF", name="Arial", size=10)
-    hdr_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        wb_new = Workbook()
+        ws_data = wb_new.active
+        ws_data.title = "Data"
+        ws_data.append(header_row)
 
-    for cell in ws_data[1]:
-        cell.fill = hdr_fill
-        cell.font = hdr_font
-        cell.alignment = hdr_align
+        hdr_fill = PatternFill("solid", start_color="1F4E79", end_color="1F4E79")
+        hdr_font = Font(bold=True, color="FFFFFF", name="Arial", size=10)
+        hdr_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    data_border = make_border()
-    row_font = Font(name="Arial", size=10)
-    alt_fill = PatternFill("solid", start_color="EBF3FB", end_color="EBF3FB")
+        for cell in ws_data[1]:
+            cell.fill = hdr_fill
+            cell.font = hdr_font
+            cell.alignment = hdr_align
 
-    for i, (_, row) in enumerate(df.iterrows()):
-        row_data = [row[c] if pd.notna(row[c]) else None for c in df.columns]
-        ws_data.append(row_data)
-        excel_row = i + 2
-        fill = alt_fill if i % 2 == 0 else PatternFill(fill_type=None)
-        for cell in ws_data[excel_row]:
-            cell.font = row_font
-            cell.border = data_border
-            cell.alignment = Alignment(vertical="center")
-            cell.fill = fill
+        data_border = make_border()
+        row_font = Font(name="Arial", size=10)
+        alt_fill = PatternFill("solid", start_color="EBF3FB", end_color="EBF3FB")
 
-    for col_idx, col_cells in enumerate(ws_data.columns, 1):
-        max_len = max((len(str(c.value)) for c in col_cells if c.value is not None), default=8)
-        ws_data.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 4, 40)
+        for i, (_, row) in enumerate(df.iterrows()):
+            row_data = [row[c] if pd.notna(row[c]) else None for c in df.columns]
+            ws_data.append(row_data)
+            excel_row = i + 2
+            fill = alt_fill if i % 2 == 0 else PatternFill(fill_type=None)
+            for cell in ws_data[excel_row]:
+                cell.font = row_font
+                cell.border = data_border
+                cell.alignment = Alignment(vertical="center")
+                cell.fill = fill
 
-    ws_data.freeze_panes = "A2"
-    build_pivot(wb_new, df, n_col, o_col, b_col, c_col, i_col)
-    wb_new.save(lead_output_path)
+        for col_idx, col_cells in enumerate(ws_data.columns, 1):
+            max_len = max((len(str(c.value)) for c in col_cells if c.value is not None), default=8)
+            ws_data.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 4, 40)
 
-    outputs = [lead_output_path]
+        ws_data.freeze_panes = "A2"
+        build_pivot(wb_new, df, n_col, o_col, b_col, c_col, i_col)
+        wb_new.save(lead_output_path)
+        outputs["lead"] = lead_output_path
 
-    if campaign_col is not None:
+    if generate_aff:
+        if campaign_col is None:
+            raise ValueError("Campaign column was not found, AFF output cannot be created.")
         aff_name = aff_output_name or f"AFF BY status- SG - CH - GCC - {today.strftime('%d-%m')}.xlsx"
         aff_output_path = output_dir / aff_name
         build_aff_by_status(df, aff_output_path, campaign_col, i_col, b_col, f_col, n_col, o_col)
-        outputs.append(aff_output_path)
+        outputs["aff"] = aff_output_path
 
     return outputs
 
@@ -754,7 +824,7 @@ def main() -> None:
     script_dir = Path(os.path.dirname(os.path.abspath(__file__)))
     input_path = script_dir / "report.xlsx"
     outputs = build_outputs(input_path=input_path, output_dir=script_dir)
-    print("\n".join([f"Generated: {path.name}" for path in outputs]))
+    print("\n".join([f"Generated: {path.name}" for path in outputs.values()]))
 
 
 if __name__ == "__main__":

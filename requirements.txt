@@ -1,2 +1,4 @@
 openpyxl==3.1.5
 pandas==3.0.3
+google-api-python-client==2.196.0
+google-auth==2.53.0

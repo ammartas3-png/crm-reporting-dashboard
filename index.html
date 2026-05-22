@@ -217,6 +217,11 @@
               Browse source .xlsx file
               <input type="file" name="lead_input" accept=".xlsx" required />
             </label>
+            <label>
+              Create AFF by Status file too
+              <span class="hint">Turn on to download both Lead Splitter and AFF outputs.</span>
+              <input id="lead-include-aff" type="checkbox" checked />
+            </label>
           </fieldset>
 
           <div class="actions">
@@ -477,6 +482,7 @@
       const leadForm = document.querySelector("#lead-form");
       const leadSubmitButton = document.querySelector("#lead-submit-button");
       const leadStatus = document.querySelector("#lead-status");
+      const leadIncludeAff = document.querySelector("#lead-include-aff");
       const crForm = document.querySelector("#cr-form");
       const crSubmitButton = document.querySelector("#cr-submit-button");
       const crStatus = document.querySelector("#cr-status");
@@ -536,13 +542,28 @@
         setGenericStatus(leadStatus, "Uploading file and generating lead outputs...", "pending");
 
         try {
-          await requestDownload(leadForm, "Lead Splitter.xlsx", { lead_kind: "lead" });
-          await requestDownload(leadForm, "AFF by Status.xlsx", { lead_kind: "aff" });
-          setGenericStatus(
-            leadStatus,
-            "Done. Two XLSX downloads have started.",
-            "success",
-          );
+          const includeAff = leadIncludeAff.checked;
+          await requestDownload(leadForm, "Lead Splitter.xlsx", {
+            lead_kind: "lead",
+            include_aff: "0",
+          });
+          if (includeAff) {
+            await requestDownload(leadForm, "AFF by Status.xlsx", {
+              lead_kind: "aff",
+              include_aff: "1",
+            });
+            setGenericStatus(
+              leadStatus,
+              "Done. Lead Splitter and AFF XLSX downloads have started.",
+              "success",
+            );
+          } else {
+            setGenericStatus(
+              leadStatus,
+              "Done. Lead Splitter XLSX download has started.",
+              "success",
+            );
+          }
         } catch (error) {
           setGenericStatus(leadStatus, error.message, "error");
         } finally {
