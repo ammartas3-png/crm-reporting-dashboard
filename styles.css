@@ -393,6 +393,13 @@ select {
   padding-right: 36px;
 }
 
+/* Keep platform dropdown options readable across browser theme quirks. */
+select option,
+select optgroup {
+  background-color: #ffffff;
+  color: #0f172a;
+}
+
 select:focus,
 input:focus {
   border-color: color-mix(in srgb, var(--primary) 72%, white 28%);
@@ -688,6 +695,12 @@ button.danger:hover:not(:disabled) {
         color-mix(in srgb, var(--surface-soft) 97%, transparent)
       ),
       url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='9' viewBox='0 0 14 9'%3E%3Cpath fill='%239eb2ca' d='M7 9 0 0h14z'/%3E%3C/svg%3E");
+  }
+
+  select option,
+  select optgroup {
+    background-color: #101826;
+    color: #e8effb;
   }
 
   input[type="file"]::file-selector-button {

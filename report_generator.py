@@ -956,6 +956,9 @@ def build_output(
         file_rows = read_crm_rows(crm_file, platform, powerbi_lookup, crm_sheet)
         all_rows.extend(file_rows)
 
+    # Program A output must be sorted alphabetically by Status (A -> Z).
+    all_rows.sort(key=lambda row: normalize_status(row.get("Status", "")))
+
     write_output(all_rows, output_file, pivot_name=pivot_name)
 
 
