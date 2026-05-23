@@ -398,11 +398,43 @@ PCT_COLOR_SCALE = ColorScaleRule(
     end_color="63BE7B",
 )
 
+PIVOT_VISIBILITY_HELPER_COL = OUTPUT_COLUMNS.index("Call Attempts") + 1
+
+
+def _set_pivot_visibility_formula(
+    ws,
+    row_index: int,
+    helper_col: int,
+    first_col: int,
+    last_col: int,
+) -> None:
+    first_letter = get_column_letter(first_col)
+    last_letter = get_column_letter(last_col)
+    helper_cell = ws.cell(row=row_index, column=helper_col)
+    helper_cell.value = (
+        f"=IF(SUMPRODUCT(--ISNUMBER({first_letter}{row_index}:{last_letter}{row_index}),"
+        f"--({first_letter}{row_index}:{last_letter}{row_index}<>0))=0,0,1)"
+    )
+    # Keep helper values available for filtering without cluttering the sheet.
+    helper_cell.number_format = ";;;"
+
+
+def _set_pivot_visibility_static(
+    ws,
+    row_index: int,
+    helper_col: int,
+    visible: bool = True,
+) -> None:
+    helper_cell = ws.cell(row=row_index, column=helper_col)
+    helper_cell.value = 1 if visible else 0
+    helper_cell.number_format = ";;;"
+
 
 def _write_pivot_status(
     ws,
     start_row: int,
     start_col: int,
+    helper_col: int,
     pivot_name: str,
     rows: list[dict[str, Any]],
     data_sheet_name: str = "CRM Output",
@@ -461,19 +493,6 @@ def _write_pivot_status(
         count_cell = ws.cell(row=row_i, column=count_col, value=count_formula)
         count_cell.alignment = Alignment(horizontal="center", vertical="center")
         count_cell.font = Font(name="Arial")
-        status_key = normalize_status(status)
-        if filter_country:
-            visible_count = sum(
-                1
-                for entry in rows
-                if normalize_status(entry.get("Status", "")) == status_key
-                and str(entry.get("Country", "") or "").strip() == filter_country
-            )
-        else:
-            visible_count = sum(
-                1 for entry in rows if normalize_status(entry.get("Status", "")) == status_key
-            )
-
         count_cell_addr = f"{count_col_letter}{row_i}"
         pct_cell = ws.cell(
             row=row_i,
@@ -483,7 +502,7 @@ def _write_pivot_status(
         pct_cell.number_format = "0%"
         pct_cell.alignment = Alignment(horizontal="center", vertical="center")
         pct_cell.font = Font(name="Arial", bold=True)
-        ws.row_dimensions[row_i].hidden = visible_count == 0
+        _set_pivot_visibility_formula(ws, row_i, helper_col, status_col, pct_col)
 
     gt_label = ws.cell(row=total_row, column=label_col)
     gt_status = ws.cell(row=total_row, column=status_col, value="Total")
@@ -510,6 +529,7 @@ def _write_pivot_status(
         cell.font = Font(bold=True, name="Arial")
         cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.fill = PatternFill("solid", start_color="F4B942", fgColor="F4B942")
+    _set_pivot_visibility_static(ws, total_row, helper_col, visible=True)
 
     for row_num in range(start_row, total_row + 1):
         for col_num in range(label_col, pct_col + 1):
@@ -528,6 +548,7 @@ def _write_pivot_call_attempts(
     ws,
     start_row: int,
     start_col: int,
+    helper_col: int,
     rows: list[dict[str, Any]],
     data_sheet_name: str = "CRM Output",
     filter_country: str | None = None,
@@ -588,29 +609,6 @@ def _write_pivot_call_attempts(
         count_cell.alignment = Alignment(horizontal="center", vertical="center")
         count_cell.font = Font(name="Arial")
 
-        if filter_country:
-            scoped_rows = [
-                entry
-                for entry in rows
-                if str(entry.get("Country", "") or "").strip() == filter_country
-            ]
-        else:
-            scoped_rows = rows
-        bucket_count = 0
-        for entry in scoped_rows:
-            attempts = entry.get("Call Attempts")
-            try:
-                attempts_int = int(float(str(attempts)))
-            except (TypeError, ValueError):
-                attempts_int = 1
-            if attempts_int < 1:
-                attempts_int = 1
-            if bucket == "5+":
-                if attempts_int >= 5:
-                    bucket_count += 1
-            elif attempts_int == int(bucket):
-                bucket_count += 1
-
         count_cell_addr = f"{count_col_letter}{row_i}"
         pct_cell = ws.cell(
             row=row_i,
@@ -620,7 +618,7 @@ def _write_pivot_call_attempts(
         pct_cell.number_format = "0%"
         pct_cell.alignment = Alignment(horizontal="center", vertical="center")
         pct_cell.font = Font(name="Arial", bold=True)
-        ws.row_dimensions[row_i].hidden = bucket_count == 0
+        _set_pivot_visibility_formula(ws, row_i, helper_col, bucket_col, pct_col)
 
     gt_label = ws.cell(row=total_row, column=label_col)
     gt_bucket = ws.cell(row=total_row, column=bucket_col, value="Total")
@@ -647,6 +645,7 @@ def _write_pivot_call_attempts(
         cell.font = Font(bold=True, name="Arial")
         cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.fill = PatternFill("solid", start_color="F4B942", fgColor="F4B942")
+    _set_pivot_visibility_static(ws, total_row, helper_col, visible=True)
 
     for row_num in range(start_row, total_row + 1):
         for col_num in range(label_col, pct_col + 1):
@@ -665,6 +664,7 @@ def _write_pivot_campaigns(
     ws,
     start_row: int,
     start_col: int,
+    helper_col: int,
     rows: list[dict[str, Any]],
     data_sheet_name: str = "CRM Output",
     filter_country: str | None = None,
@@ -722,6 +722,7 @@ def _write_pivot_campaigns(
         for row_num in range(header_start, header_end + 1):
             for col_num in range(status_col, pct_col + 1):
                 ws.cell(row=row_num, column=col_num).border = THIN_BORDER
+            _set_pivot_visibility_static(ws, row_num, helper_col, visible=True)
 
         first_count_row = header_end + 1
         last_count_row = first_count_row + n - 1
@@ -756,8 +757,6 @@ def _write_pivot_campaigns(
             count_cell = ws.cell(row=row_i, column=count_col, value=count_formula)
             count_cell.alignment = Alignment(horizontal="center", vertical="center")
             count_cell.font = Font(name="Arial")
-            status_count = campaign_data.get(campaign, {}).get(normalize_status(status), 0)
-
             count_cell_addr = f"{count_col_letter}{row_i}"
             pct_cell = ws.cell(
                 row=row_i,
@@ -767,7 +766,7 @@ def _write_pivot_campaigns(
             pct_cell.number_format = "0%"
             pct_cell.alignment = Alignment(horizontal="center", vertical="center")
             pct_cell.font = Font(name="Arial", bold=True)
-            ws.row_dimensions[row_i].hidden = status_count == 0
+            _set_pivot_visibility_formula(ws, row_i, helper_col, status_col, pct_col)
 
         campaign_total_formula = (
             f"=SUM({count_col_letter}{first_count_row}:"
@@ -795,6 +794,7 @@ def _write_pivot_campaigns(
             cell.font = Font(bold=True, name="Arial")
             cell.alignment = Alignment(horizontal="center", vertical="center")
             cell.fill = PatternFill("solid", start_color="F4B942", fgColor="F4B942")
+        _set_pivot_visibility_static(ws, campaign_total_row, helper_col, visible=True)
 
         for row_num in range(first_count_row, campaign_total_row + 1):
             for col_num in range(status_col, pct_col + 1):
@@ -813,6 +813,7 @@ def _write_pivot_campaigns(
         cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.fill = PatternFill("solid", start_color="BDD7EE", fgColor="BDD7EE")
         cell.border = THIN_BORDER
+    _set_pivot_visibility_static(ws, current_row, helper_col, visible=True)
 
     for range_ref in pct_data_ranges:
         ws.conditional_formatting.add(range_ref, PCT_COLOR_SCALE)
@@ -947,6 +948,7 @@ def write_output(
         ws_data,
         current_row,
         current_col,
+        PIVOT_VISIBILITY_HELPER_COL,
         pivot_name,
         rows,
         data_sheet_name="CRM Output",
@@ -957,18 +959,34 @@ def write_output(
         ws_data,
         current_row,
         current_col,
+        PIVOT_VISIBILITY_HELPER_COL,
         rows,
         data_sheet_name="CRM Output",
     )
     current_row += 3
 
-    _write_pivot_campaigns(
+    current_row = _write_pivot_campaigns(
         ws_data,
         current_row,
         current_col,
+        PIVOT_VISIBILITY_HELPER_COL,
         rows,
         data_sheet_name="CRM Output",
     )
+
+    helper_col_letter = get_column_letter(PIVOT_VISIBILITY_HELPER_COL)
+    helper_header_row = pivot_start_row - 1
+    ws_data.cell(row=helper_header_row, column=PIVOT_VISIBILITY_HELPER_COL, value="PivotVisibility")
+    ws_data.cell(row=helper_header_row, column=PIVOT_VISIBILITY_HELPER_COL).number_format = ";;;"
+    for row_idx in range(pivot_start_row, current_row):
+        helper_cell = ws_data.cell(row=row_idx, column=PIVOT_VISIBILITY_HELPER_COL)
+        if helper_cell.value is None:
+            _set_pivot_visibility_static(
+                ws_data, row_idx, PIVOT_VISIBILITY_HELPER_COL, visible=True
+            )
+
+    ws_data.auto_filter.ref = f"A{helper_header_row}:{helper_col_letter}{current_row - 1}"
+    ws_data.auto_filter.add_filter_column(PIVOT_VISIBILITY_HELPER_COL - 1, ["1"])
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output_file)
