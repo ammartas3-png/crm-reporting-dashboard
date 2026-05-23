@@ -398,6 +398,8 @@ PCT_COLOR_SCALE = ColorScaleRule(
     end_color="63BE7B",
 )
 
+PIVOT_VISIBILITY_HELPER_COL = 200
+
 
 def _write_pivot_status(
     ws,
@@ -408,6 +410,7 @@ def _write_pivot_status(
     data_sheet_name: str = "CRM Output",
     filter_country: str | None = None,
     main_sheet_name: str | None = None,
+    helper_col: int = PIVOT_VISIBILITY_HELPER_COL,
 ) -> int:
     label_col = start_col
     status_col = start_col + 1
@@ -483,6 +486,12 @@ def _write_pivot_status(
         pct_cell.number_format = "0%"
         pct_cell.alignment = Alignment(horizontal="center", vertical="center")
         pct_cell.font = Font(name="Arial", bold=True)
+        helper_cell = ws.cell(
+            row=row_i,
+            column=helper_col,
+            value=f"=IF({count_cell_addr}=0,0,1)",
+        )
+        helper_cell.number_format = ";;;"
         ws.row_dimensions[row_i].hidden = visible_count == 0
 
     gt_label = ws.cell(row=total_row, column=label_col)
@@ -514,6 +523,7 @@ def _write_pivot_status(
     for row_num in range(start_row, total_row + 1):
         for col_num in range(label_col, pct_col + 1):
             ws.cell(row=row_num, column=col_num).border = THIN_BORDER
+    ws.cell(row=total_row, column=helper_col, value=1).number_format = ";;;"
 
     pct_col_letter = get_column_letter(pct_col)
     ws.conditional_formatting.add(
@@ -532,6 +542,7 @@ def _write_pivot_call_attempts(
     data_sheet_name: str = "CRM Output",
     filter_country: str | None = None,
     main_sheet_name: str | None = None,
+    helper_col: int = PIVOT_VISIBILITY_HELPER_COL,
 ) -> int:
     bucket_order = ["1", "2", "3", "4", "5+"]
 
@@ -620,6 +631,12 @@ def _write_pivot_call_attempts(
         pct_cell.number_format = "0%"
         pct_cell.alignment = Alignment(horizontal="center", vertical="center")
         pct_cell.font = Font(name="Arial", bold=True)
+        helper_cell = ws.cell(
+            row=row_i,
+            column=helper_col,
+            value=f"=IF({count_cell_addr}=0,0,1)",
+        )
+        helper_cell.number_format = ";;;"
         ws.row_dimensions[row_i].hidden = bucket_count == 0
 
     gt_label = ws.cell(row=total_row, column=label_col)
@@ -651,6 +668,7 @@ def _write_pivot_call_attempts(
     for row_num in range(start_row, total_row + 1):
         for col_num in range(label_col, pct_col + 1):
             ws.cell(row=row_num, column=col_num).border = THIN_BORDER
+    ws.cell(row=total_row, column=helper_col, value=1).number_format = ";;;"
 
     pct_col_letter = get_column_letter(pct_col)
     ws.conditional_formatting.add(
@@ -669,6 +687,7 @@ def _write_pivot_campaigns(
     data_sheet_name: str = "CRM Output",
     filter_country: str | None = None,
     main_sheet_name: str | None = None,
+    helper_col: int = PIVOT_VISIBILITY_HELPER_COL,
 ) -> int:
     campaign_data: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for row in rows:
@@ -767,6 +786,12 @@ def _write_pivot_campaigns(
             pct_cell.number_format = "0%"
             pct_cell.alignment = Alignment(horizontal="center", vertical="center")
             pct_cell.font = Font(name="Arial", bold=True)
+            helper_cell = ws.cell(
+                row=row_i,
+                column=helper_col,
+                value=f"=IF({count_cell_addr}=0,0,1)",
+            )
+            helper_cell.number_format = ";;;"
             ws.row_dimensions[row_i].hidden = status_count == 0
 
         campaign_total_formula = (
@@ -799,6 +824,8 @@ def _write_pivot_campaigns(
         for row_num in range(first_count_row, campaign_total_row + 1):
             for col_num in range(status_col, pct_col + 1):
                 ws.cell(row=row_num, column=col_num).border = THIN_BORDER
+        ws.cell(row=header_start, column=helper_col, value=1).number_format = ";;;"
+        ws.cell(row=campaign_total_row, column=helper_col, value=1).number_format = ";;;"
 
         current_row = campaign_total_row + 2
 
@@ -813,6 +840,7 @@ def _write_pivot_campaigns(
         cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.fill = PatternFill("solid", start_color="BDD7EE", fgColor="BDD7EE")
         cell.border = THIN_BORDER
+    ws.cell(row=current_row, column=helper_col, value=1).number_format = ";;;"
 
     for range_ref in pct_data_ranges:
         ws.conditional_formatting.add(range_ref, PCT_COLOR_SCALE)
@@ -851,6 +879,7 @@ def write_output(
     status_col_idx = OUTPUT_COLUMNS.index("Status") + 1
     cb_col_idx = OUTPUT_COLUMNS.index("CB") + 1
     comments_col_idx = OUTPUT_COLUMNS.index("Comments") + 1
+    helper_col_letter = get_column_letter(PIVOT_VISIBILITY_HELPER_COL)
 
     ws_data.append(OUTPUT_COLUMNS)
     for cell in ws_data[1]:
@@ -950,6 +979,7 @@ def write_output(
         pivot_name,
         rows,
         data_sheet_name="CRM Output",
+        helper_col=PIVOT_VISIBILITY_HELPER_COL,
     )
     current_row += 1
 
@@ -959,6 +989,7 @@ def write_output(
         current_col,
         rows,
         data_sheet_name="CRM Output",
+        helper_col=PIVOT_VISIBILITY_HELPER_COL,
     )
     current_row += 3
 
@@ -968,7 +999,10 @@ def write_output(
         current_col,
         rows,
         data_sheet_name="CRM Output",
+        helper_col=PIVOT_VISIBILITY_HELPER_COL,
     )
+    ws_data.column_dimensions[helper_col_letter].hidden = True
+    ws_data.column_dimensions[helper_col_letter].width = 1.2
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output_file)
