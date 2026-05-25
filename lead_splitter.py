@@ -7,8 +7,6 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
-from google.oauth2 import service_account
-from googleapiclient.discovery import build as build_google_service
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -104,6 +102,9 @@ NAME_FIXES_SPREADSHEET_ID = "1wqF8cCsPI8jFcxQ-nwMRGzwvcxP-ynfJyOXGSJEhk-E"
 NAME_FIXES_SHEET_NAME = "Lead Splitter"
 NAME_FIXES_SERVICE_ACCOUNT_EMAIL = "matservice@mitservice.iam.gserviceaccount.com"
 NAME_FIXES_ENV_KEYS = ("gmail", "GMAIL", "GOOGLE_PRIVATE_KEY")
+NAME_FIXES_FETCH_TIMEOUT_SECONDS = float(
+    os.environ.get("LEAD_SPLITTER_NAME_FIX_TIMEOUT_SECONDS", "1.25")
+)
 
 
 def make_border(color: str = "D0D0D0") -> Border:
@@ -122,6 +123,11 @@ def _get_google_private_key() -> str:
 
 
 def load_name_fixes_from_sheet() -> dict[str, str]:
+    import httplib2
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build as build_google_service
+    from google_auth_httplib2 import AuthorizedHttp
+
     credentials_info = {
         "type": "service_account",
         "client_email": NAME_FIXES_SERVICE_ACCOUNT_EMAIL,
@@ -138,15 +144,19 @@ def load_name_fixes_from_sheet() -> dict[str, str]:
         credentials=credentials,
         cache_discovery=False,
     )
-    response = (
+    request = (
         service.spreadsheets()
         .values()
         .get(
             spreadsheetId=NAME_FIXES_SPREADSHEET_ID,
             range=f"{NAME_FIXES_SHEET_NAME}!A:B",
         )
-        .execute()
     )
+    auth_http = AuthorizedHttp(
+        credentials,
+        http=httplib2.Http(timeout=NAME_FIXES_FETCH_TIMEOUT_SECONDS),
+    )
+    response = request.execute(http=auth_http, num_retries=0)
     rows = response.get("values", [])
     if not rows:
         return {}
