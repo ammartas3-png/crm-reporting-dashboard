@@ -818,26 +818,15 @@ def build_outputs(
             cell.font = hdr_font
             cell.alignment = hdr_align
 
-        data_border = make_border()
-        row_font = Font(name="Arial", size=10)
-        alt_fill = PatternFill("solid", start_color="EBF3FB", end_color="EBF3FB")
-        plain_fill = PatternFill(fill_type=None)
-        data_alignment = Alignment(vertical="center")
         export_rows = df.where(pd.notna(df), None)
 
-        for i, row_data in enumerate(export_rows.itertuples(index=False, name=None)):
+        for row_data in export_rows.itertuples(index=False, name=None):
             ws_data.append(row_data)
-            excel_row = i + 2
-            fill = alt_fill if i % 2 == 0 else plain_fill
-            for cell in ws_data[excel_row]:
-                cell.font = row_font
-                cell.border = data_border
-                cell.alignment = data_alignment
-                cell.fill = fill
 
+        width_sample = export_rows.head(5000)
         for col_idx, column_name in enumerate(df.columns, 1):
             col_values = (
-                export_rows.iloc[:, col_idx - 1].dropna().astype(str).str.len()
+                width_sample.iloc[:, col_idx - 1].dropna().astype(str).str.len()
             )
             max_len = max(
                 int(col_values.max()) if not col_values.empty else 0,

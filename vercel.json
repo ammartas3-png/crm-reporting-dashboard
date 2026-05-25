@@ -1,0 +1,8 @@
+{
+  "functions": {
+    "api/generate.py": {
+      "maxDuration": 60,
+      "memory": 3008
+    }
+  }
+}
