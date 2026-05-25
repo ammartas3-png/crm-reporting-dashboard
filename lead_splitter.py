@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import os
 import re
+from functools import lru_cache
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 from google.oauth2 import service_account
 from googleapiclient.discovery import build as build_google_service
-from openpyxl import Workbook, load_workbook
+from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
@@ -163,6 +164,21 @@ def load_name_fixes_from_sheet() -> dict[str, str]:
     return fixes
 
 
+@lru_cache(maxsize=1)
+def _cached_name_fixes_items() -> tuple[tuple[str, str], ...]:
+    return tuple(load_name_fixes_from_sheet().items())
+
+
+def get_name_fixes() -> dict[str, str]:
+    try:
+        sheet_fixes = dict(_cached_name_fixes_items())
+        if sheet_fixes:
+            return sheet_fixes
+    except Exception:
+        pass
+    return dict(NAME_FIXES)
+
+
 def clean_agent_name(name):
     if not isinstance(name, str):
         return name
@@ -221,13 +237,17 @@ def _cr_fill_for_ratio(cr_value: float) -> PatternFill:
     return PatternFill("solid", start_color=color, end_color=color)
 
 
+def _flag_is_one(series: pd.Series) -> pd.Series:
+    return series.fillna("").astype(str).str.strip().eq("1").astype(int)
+
+
 def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col) -> None:
     ws = wb.create_sheet("Pivot")
 
     df = df.copy()
     df["_DESK2"] = df[b_col].apply(get_desk2)
-    df["_N1"] = df[n_col].apply(lambda x: 1 if str(x).strip() == "1" else 0)
-    df["_O1"] = df[o_col].apply(lambda x: 1 if str(x).strip() == "1" else 0)
+    df["_N1"] = _flag_is_one(df[n_col])
+    df["_O1"] = _flag_is_one(df[o_col])
 
     agg = df.groupby(["_DESK2", i_col, c_col], sort=True).agg(
         Assigned=("_N1", "sum"), FTD=("_O1", "sum")
@@ -466,14 +486,16 @@ def _write_standard_table(ws, data_df, col_offset, country_label, campaign_col, 
                 .reset_index()
             )
 
-            for _, status_row in status_agg.iterrows():
-                leads = int(status_row["Leads"])
-                ftd = int(status_row["FTD"])
+            for status_value, leads_value, ftd_value in status_agg.itertuples(
+                index=False, name=None
+            ):
+                leads = int(leads_value)
+                ftd = int(ftd_value)
                 vals = [
                     country_label if first_country else "",
                     office if first_office else "",
                     campaign if first_campaign else "",
-                    status_row[status_col],
+                    status_value,
                     leads,
                     ftd,
                     _cr(leads, ftd),
@@ -553,15 +575,17 @@ def _write_gcc_table(ws, data_df, col_offset, campaign_col, country_col, status_
                     .reset_index()
                 )
 
-                for _, status_row in status_agg.iterrows():
-                    leads = int(status_row["Leads"])
-                    ftd = int(status_row["FTD"])
+                for status_value, leads_value, ftd_value in status_agg.itertuples(
+                    index=False, name=None
+                ):
+                    leads = int(leads_value)
+                    ftd = int(ftd_value)
                     vals = [
                         "GCC EN" if first_region else "",
                         office if first_office else "",
                         campaign if first_campaign else "",
                         country if first_country else "",
-                        status_row[status_col],
+                        status_value,
                         leads,
                         ftd,
                         _cr(leads, ftd),
@@ -622,8 +646,8 @@ def build_aff_by_status(df, output_path, campaign_col, country_col, desk_col, st
     data = df.copy()
     data["_OFFICE"] = data[desk_col].apply(get_office)
     data["_DESK2"] = data[desk_col].apply(get_desk2)
-    data["_N1"] = data[n_col].apply(lambda x: 1 if str(x).strip() == "1" else 0)
-    data["_O1"] = data[o_col].apply(lambda x: 1 if str(x).strip() == "1" else 0)
+    data["_N1"] = _flag_is_one(data[n_col])
+    data["_O1"] = _flag_is_one(data[o_col])
 
     ch_df = data[data[country_col].apply(lambda x: str(x).strip() == "Switzerland")].copy()
     sg_df = data[data[country_col].apply(lambda x: str(x).strip() == "Singapore")].copy()
@@ -707,7 +731,7 @@ def build_outputs(
     lead_name = lead_output_name or f"Lead Splitter - {today.strftime('%d-%m')}.xlsx"
     lead_output_path = output_dir / lead_name
 
-    name_fixes = load_name_fixes_from_sheet()
+    name_fixes = get_name_fixes()
 
     df = pd.read_excel(input_path, header=2, dtype=str)
     df.columns = [str(c) for c in df.columns]
@@ -724,52 +748,61 @@ def build_outputs(
     n_col = col(13)
     o_col = col(14)
 
+    required_columns = {
+        "Desk": b_col,
+        "Agent": c_col,
+        "CID": e_col,
+        "Status": f_col,
+        "Country": i_col,
+        "Assigned": n_col,
+        "FTD": o_col,
+    }
+    missing_required = [label for label, column_name in required_columns.items() if column_name is None]
+    if missing_required:
+        raise ValueError(
+            "Lead Splitter input is missing required columns: "
+            + ", ".join(missing_required)
+        )
+
     campaign_col = next((c for c in df.columns if str(c).strip().lower() == "campaign"), None)
+    assigned_text = df[n_col].fillna("").astype(str).str.strip()
+    ftd_text = df[o_col].fillna("").astype(str).str.strip()
+    df = df.loc[~(assigned_text.eq("") & ftd_text.eq(""))].copy()
 
-    def both_empty(row):
-        n_val = str(row[n_col]).strip() if pd.notna(row[n_col]) else ""
-        o_val = str(row[o_col]).strip() if pd.notna(row[o_col]) else ""
-        return n_val == "" and o_val == ""
+    cid_key = df[e_col].fillna("").astype(str)
+    duplicate_cid_mask = cid_key.duplicated(keep=False)
+    assigned_is_one = df[n_col].fillna("").astype(str).str.strip().eq("1")
+    ftd_is_one = df[o_col].fillna("").astype(str).str.strip().eq("1")
 
-    df = df[~df.apply(both_empty, axis=1)].copy()
+    # Keep the FTD row for duplicated CIDs and normalize Assigned=1 there.
+    df.loc[duplicate_cid_mask & ftd_is_one, n_col] = "1"
+    df = df.loc[~(duplicate_cid_mask & assigned_is_one & ~ftd_is_one)].copy()
 
-    cid_counts = df[e_col].value_counts()
-    dup_cids = cid_counts[cid_counts > 1].index.tolist()
-    rows_to_drop = []
+    agent_raw = df[c_col].fillna("").astype(str).str.strip()
+    pool_mask = agent_raw.str.startswith("BI pool") | agent_raw.str.startswith("Pool")
+    df = df.loc[~pool_mask].copy()
 
-    for cid in dup_cids:
-        group = df[df[e_col] == cid]
-        for idx, row in group.iterrows():
-            n1 = str(row[n_col]).strip() == "1" if pd.notna(row[n_col]) else False
-            o1 = str(row[o_col]).strip() == "1" if pd.notna(row[o_col]) else False
-            if n1 and not o1:
-                rows_to_drop.append(idx)
-            elif o1:
-                df.at[idx, n_col] = "1"
-
-    df = df.drop(index=rows_to_drop).copy()
-    df = df[~df[c_col].apply(is_pool_agent)].copy()
-    df[c_col] = df[c_col].apply(clean_agent_name).apply(
-        lambda value: fix_name(value, name_fixes)
+    cleaned_agents = (
+        df[c_col]
+        .fillna("")
+        .astype(str)
+        .str.replace(r"\s*\([^)]*\)\s*$", "", regex=True)
+        .str.strip()
+        .str.replace(r"(CY|AE|IN)$", "", regex=True)
+        .str.strip()
+        .replace(name_fixes)
     )
+    df[c_col] = cleaned_agents
 
-    def update_desk(row):
-        country = str(row[i_col]).strip() if pd.notna(row[i_col]) else ""
-        agent = str(row[c_col]).strip() if pd.notna(row[c_col]) else ""
-        if country == "Malaysia" and agent not in MY_EXEMPT_AGENTS:
-            return "TR1-MY"
-        if country == "Bangladesh":
-            return "TR1-IN"
-        return row[b_col]
-
-    df[b_col] = df.apply(update_desk, axis=1)
+    country_text = df[i_col].fillna("").astype(str).str.strip()
+    agent_text = df[c_col].fillna("").astype(str).str.strip()
+    df.loc[country_text.eq("Bangladesh"), b_col] = "TR1-IN"
+    df.loc[country_text.eq("Malaysia") & ~agent_text.isin(MY_EXEMPT_AGENTS), b_col] = "TR1-MY"
 
     outputs: dict[str, Path] = {}
 
     if generate_lead:
-        wb_orig = load_workbook(input_path, data_only=True)
-        ws_orig = wb_orig.active
-        header_row = [cell.value for cell in ws_orig[3]]
+        header_row = list(df.columns)
 
         wb_new = Workbook()
         ws_data = wb_new.active
@@ -788,20 +821,28 @@ def build_outputs(
         data_border = make_border()
         row_font = Font(name="Arial", size=10)
         alt_fill = PatternFill("solid", start_color="EBF3FB", end_color="EBF3FB")
+        plain_fill = PatternFill(fill_type=None)
+        data_alignment = Alignment(vertical="center")
+        export_rows = df.where(pd.notna(df), None)
 
-        for i, (_, row) in enumerate(df.iterrows()):
-            row_data = [row[c] if pd.notna(row[c]) else None for c in df.columns]
+        for i, row_data in enumerate(export_rows.itertuples(index=False, name=None)):
             ws_data.append(row_data)
             excel_row = i + 2
-            fill = alt_fill if i % 2 == 0 else PatternFill(fill_type=None)
+            fill = alt_fill if i % 2 == 0 else plain_fill
             for cell in ws_data[excel_row]:
                 cell.font = row_font
                 cell.border = data_border
-                cell.alignment = Alignment(vertical="center")
+                cell.alignment = data_alignment
                 cell.fill = fill
 
-        for col_idx, col_cells in enumerate(ws_data.columns, 1):
-            max_len = max((len(str(c.value)) for c in col_cells if c.value is not None), default=8)
+        for col_idx, column_name in enumerate(df.columns, 1):
+            col_values = (
+                export_rows.iloc[:, col_idx - 1].dropna().astype(str).str.len()
+            )
+            max_len = max(
+                int(col_values.max()) if not col_values.empty else 0,
+                len(str(column_name)),
+            )
             ws_data.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 4, 40)
 
         ws_data.freeze_panes = "A2"

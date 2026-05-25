@@ -217,17 +217,11 @@
               Browse source .xlsx file
               <input type="file" name="lead_input" accept=".xlsx" required />
             </label>
-            <div class="toggle-row">
-              <input id="lead-include-aff" class="toggle-input" type="checkbox" checked />
-              <label class="toggle-label" for="lead-include-aff">
-                <span class="toggle-switch" aria-hidden="true"></span>
-                <span>By affiliation</span>
-              </label>
-            </div>
           </fieldset>
 
           <div class="actions">
-            <button id="lead-submit-button" type="submit">Generate lead files</button>
+            <button id="lead-generate-button" type="button">Generate Lead splitter</button>
+            <button id="lead-aff-button" type="button" class="secondary">Generate by AFF</button>
             <p id="lead-status" class="status-line" role="status" aria-live="polite"></p>
           </div>
         </form>
@@ -447,15 +441,7 @@
           });
 
           if (!response.ok) {
-            let message = "Unable to generate the workbook.";
-            try {
-              const payload = await response.json();
-              if (payload.error) {
-                message = payload.error;
-              }
-            } catch {
-              message = await response.text();
-            }
+            const message = await readErrorMessage(response, "Unable to generate the workbook.");
             throw new Error(message);
           }
 
@@ -482,9 +468,9 @@
       });
 
       const leadForm = document.querySelector("#lead-form");
-      const leadSubmitButton = document.querySelector("#lead-submit-button");
+      const leadGenerateButton = document.querySelector("#lead-generate-button");
+      const leadAffButton = document.querySelector("#lead-aff-button");
       const leadStatus = document.querySelector("#lead-status");
-      const leadIncludeAff = document.querySelector("#lead-include-aff");
       const crForm = document.querySelector("#cr-form");
       const crSubmitButton = document.querySelector("#cr-submit-button");
       const crStatus = document.querySelector("#cr-status");
@@ -493,6 +479,20 @@
         const disposition = response.headers.get("content-disposition");
         const match = /filename="?([^";]+)"?/i.exec(disposition || "");
         return match ? match[1] : fallback;
+      }
+
+      async function readErrorMessage(response, fallbackMessage) {
+        const payloadText = await response.text();
+        if (!payloadText) {
+          return fallbackMessage;
+        }
+        try {
+          const payload = JSON.parse(payloadText);
+          if (payload && typeof payload.error === "string" && payload.error.trim()) {
+            return payload.error;
+          }
+        } catch {}
+        return payloadText;
       }
 
       async function requestDownload(formEl, fallbackFilename, extraFields = {}) {
@@ -507,15 +507,10 @@
           });
 
           if (!response.ok) {
-            let message = "Unable to generate the requested file.";
-            try {
-              const payload = await response.json();
-              if (payload.error) {
-                message = payload.error;
-              }
-            } catch {
-              message = await response.text();
-            }
+            const message = await readErrorMessage(
+              response,
+              "Unable to generate the requested file.",
+            );
             throw new Error(message);
           }
 
@@ -534,43 +529,47 @@
         }
       }
 
-      leadForm.addEventListener("submit", async (event) => {
-        event.preventDefault();
+      async function handleLeadRequest(kind) {
         if (!leadForm.reportValidity()) {
           return;
         }
 
-        leadSubmitButton.disabled = true;
-        setGenericStatus(leadStatus, "Uploading file and generating lead outputs...", "pending");
+        leadGenerateButton.disabled = true;
+        leadAffButton.disabled = true;
+        const isAff = kind === "aff";
+        setGenericStatus(
+          leadStatus,
+          isAff
+            ? "Uploading file and generating by AFF workbook..."
+            : "Uploading file and generating Lead Splitter workbook...",
+          "pending",
+        );
 
         try {
-          const includeAff = leadIncludeAff.checked;
-          await requestDownload(leadForm, "Lead Splitter.xlsx", {
-            lead_kind: "lead",
-            include_aff: "0",
+          await requestDownload(leadForm, isAff ? "AFF by Status.xlsx" : "Lead Splitter.xlsx", {
+            lead_kind: kind,
           });
-          if (includeAff) {
-            await requestDownload(leadForm, "AFF by Status.xlsx", {
-              lead_kind: "aff",
-              include_aff: "1",
-            });
-            setGenericStatus(
-              leadStatus,
-              "Done. Lead Splitter and AFF XLSX downloads have started.",
-              "success",
-            );
-          } else {
-            setGenericStatus(
-              leadStatus,
-              "Done. Lead Splitter XLSX download has started.",
-              "success",
-            );
-          }
+          setGenericStatus(
+            leadStatus,
+            isAff
+              ? "Done. Your AFF workbook download has started."
+              : "Done. Your Lead Splitter workbook download has started.",
+            "success",
+          );
         } catch (error) {
           setGenericStatus(leadStatus, error.message, "error");
         } finally {
-          leadSubmitButton.disabled = false;
+          leadGenerateButton.disabled = false;
+          leadAffButton.disabled = false;
         }
+      }
+
+      leadGenerateButton.addEventListener("click", () => {
+        void handleLeadRequest("lead");
+      });
+
+      leadAffButton.addEventListener("click", () => {
+        void handleLeadRequest("aff");
       });
 
       crForm.addEventListener("submit", async (event) => {
