@@ -251,6 +251,13 @@ def _flag_is_one(series: pd.Series) -> pd.Series:
     return series.fillna("").astype(str).str.strip().eq("1").astype(int)
 
 
+def _cr(leads, ftd) -> float:
+    # Keep CR flexible when leads are zero: 1 FTD -> 100%, 2 FTD -> 200%, etc.
+    if leads > 0:
+        return ftd / leads
+    return float(ftd) if ftd > 0 else 0.0
+
+
 def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col) -> None:
     ws = wb.create_sheet("Pivot")
 
@@ -279,7 +286,7 @@ def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col) -> None:
     lane_rows = {lane: 2 for lane in section_specs}
 
     def write_header(start_col: int, country_header: str) -> None:
-        headers = ["DESK", country_header, "Agent", "Leads", "FT", "CR"]
+        headers = ["DESK", country_header, "Agent", "Leads", "FTD", "CR"]
         for offset, header in enumerate(headers):
             cell = ws.cell(row=1, column=start_col + offset, value=header)
             cell.font = header_font
@@ -300,7 +307,7 @@ def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col) -> None:
         is_total: bool = False,
         total_fill: PatternFill | None = None,
     ) -> None:
-        cr_value = (ftd / leads) if leads > 0 else 0
+        cr_value = _cr(leads, ftd)
         values = [desk_val, country_val, agent_val, leads, ftd, cr_value]
         row_fill = total_fill if is_total and total_fill is not None else white_fill
         for offset, value in enumerate(values):
@@ -437,10 +444,6 @@ AFF_FONT_HDR = Font(bold=True, color="FFFFFF", name="Arial", size=10)
 AFF_FONT_BOLD = Font(bold=True, name="Arial", size=10)
 AFF_FONT_BOLD_W = Font(bold=True, color="FFFFFF", name="Arial", size=10)
 AFF_FONT_NORM = Font(bold=False, name="Arial", size=10)
-
-
-def _cr(leads, ftd) -> float:
-    return ftd / leads if leads > 0 else 0
 
 
 def _aff_write_headers(ws, col_offset, headers) -> None:
