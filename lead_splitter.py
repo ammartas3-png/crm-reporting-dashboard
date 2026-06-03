@@ -492,6 +492,7 @@ def _write_standard_table(ws, data_df, col_offset, country_label, campaign_col, 
         for campaign, campaign_df in office_df.groupby(campaign_col, sort=True):
             first_campaign = True
             alt = 0
+            campaign_leads = int(campaign_df["_N1"].sum())
 
             status_agg = (
                 campaign_df.groupby(status_col, sort=True)
@@ -511,7 +512,7 @@ def _write_standard_table(ws, data_df, col_offset, country_label, campaign_col, 
                     status_value,
                     leads,
                     ftd,
-                    _cr(leads, ftd),
+                    _cr(campaign_leads, ftd),
                 ]
                 _aff_write_row(
                     ws,
@@ -527,7 +528,6 @@ def _write_standard_table(ws, data_df, col_offset, country_label, campaign_col, 
                 alt += 1
                 row_i += 1
 
-            campaign_leads = int(campaign_df["_N1"].sum())
             campaign_ftd = int(campaign_df["_O1"].sum())
             _aff_write_row(
                 ws,
@@ -577,6 +577,7 @@ def _write_gcc_table(ws, data_df, col_offset, campaign_col, country_col, status_
         first_office = True
         for campaign, campaign_df in office_df.groupby(campaign_col, sort=True):
             first_campaign = True
+            campaign_leads = int(campaign_df["_N1"].sum())
 
             for country, country_df in campaign_df.groupby(country_col, sort=True):
                 first_country = True
@@ -601,7 +602,7 @@ def _write_gcc_table(ws, data_df, col_offset, campaign_col, country_col, status_
                         status_value,
                         leads,
                         ftd,
-                        _cr(leads, ftd),
+                        _cr(campaign_leads, ftd),
                     ]
                     _aff_write_row(
                         ws,
@@ -618,7 +619,6 @@ def _write_gcc_table(ws, data_df, col_offset, campaign_col, country_col, status_
                     alt += 1
                     row_i += 1
 
-            campaign_leads = int(campaign_df["_N1"].sum())
             campaign_ftd = int(campaign_df["_O1"].sum())
             _aff_write_row(
                 ws,
@@ -661,6 +661,8 @@ def build_aff_by_status(df, output_path, campaign_col, country_col, desk_col, st
     data["_DESK2"] = data[desk_col].apply(get_desk2)
     data["_N1"] = _flag_is_one(data[n_col])
     data["_O1"] = _flag_is_one(data[o_col])
+    # AFF rule: any row with O column = 1 is treated as Telemarketing.
+    data.loc[data["_O1"] == 1, status_col] = "Telemarketing"
 
     ch_df = data[data[country_col].apply(lambda x: str(x).strip() == "Switzerland")].copy()
     sg_df = data[data[country_col].apply(lambda x: str(x).strip() == "Singapore")].copy()
