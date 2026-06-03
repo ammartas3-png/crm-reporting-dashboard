@@ -456,6 +456,10 @@ def _aff_write_headers(ws, col_offset, headers) -> None:
     ws.row_dimensions[1].height = 20
 
 
+def _share(part, whole) -> float:
+    return (part / whole) if whole > 0 else 0.0
+
+
 def _aff_write_row(ws, row_i, col_offset, vals, font, fill, skip_fill=0) -> None:
     for j, val in enumerate(vals):
         cell = ws.cell(row=row_i, column=col_offset + j + 1, value=val)
@@ -512,7 +516,7 @@ def _write_standard_table(ws, data_df, col_offset, country_label, campaign_col, 
                     status_value,
                     leads,
                     ftd,
-                    _cr(campaign_leads, ftd),
+                    _share(leads, campaign_leads),
                 ]
                 _aff_write_row(
                     ws,
@@ -602,7 +606,7 @@ def _write_gcc_table(ws, data_df, col_offset, campaign_col, country_col, status_
                         status_value,
                         leads,
                         ftd,
-                        _cr(campaign_leads, ftd),
+                        _share(leads, campaign_leads),
                     ]
                     _aff_write_row(
                         ws,
