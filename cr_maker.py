@@ -13,6 +13,32 @@ from openpyxl.utils import get_column_letter
 GCC_COUNTRIES = {"Saudi Arabia", "United Arab Emirates", "Kuwait", "Qatar", "Oman", "Bahrain"}
 EXCLUDE_EN_NON_GCC = {"Singapore", "Malaysia"}
 ALL_DESK_COUNTRIES = {"Mauritius", "Brunei Darussalam"}
+OTHERS_ENG_ALLOWED_COUNTRIES = {
+    "Antigua and Barbuda",
+    "Bahamas",
+    "Barbados",
+    "Bermuda",
+    "Brunei Darussalam",
+    "Cayman Islands",
+    "Dominica",
+    "Faroe Islands",
+    "Fiji",
+    "Grenada",
+    "Guernsey",
+    "Guyana",
+    "Hong Kong",
+    "Isle of Man",
+    "Jamaica",
+    "Mauritius",
+    "Norway",
+    "Papua New Guinea",
+    "Saint Kitts and Nevis",
+    "Saint Lucia",
+    "Saint Vincent and the Grenadines",
+    "Trinidad and Tobago",
+    "Turks and Caicos Islands",
+    "Virgin Islands",
+}
 
 
 def extract_desk_code(desk_name):
@@ -142,6 +168,7 @@ def build_p7(df):
     ]
     all_sub = df[df["Country"].isin(ALL_DESK_COUNTRIES)]
     sub = pd.concat([en_sub, all_sub])
+    sub = sub[sub["Country"].isin(OTHERS_ENG_ALLOWED_COUNTRIES)]
     return sub.groupby("Country").agg(Reg=("Reg", "sum"), FTD=("FTD", "sum")).reset_index().sort_values("Country")
 
 

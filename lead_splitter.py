@@ -11,84 +11,6 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-NAME_FIXES = {
-    "Ahmed Meh": "Ahmed Me",
-    "Ali D": "Ali Da",
-    "Fekraoui Ra": "FekRaraoui Ra",
-    "Jehad Ab": "Jehad Ba",
-    "Muhammed K": "Muhammed Ke",
-    "Rissa RissaZa": "Rissa Za",
-    "Nadia Ro": "Nadia R",
-    "Nadia R.": "Nadia R",
-    "Aya C": "Aya Ca",
-    "Ismail Alt": "Ismail Al",
-    "Abrar Os": "Abrar O",
-    "Ahmad Al": "Ahmad A",
-    "Ali Nad": "Ali Na",
-    "Ali Sal": "Ali Sa",
-    "Ana Ca": "Ana C",
-    "Anas Ab": "Anas B",
-    "Astrolan Nn": "Astrolan No",
-    "Bruno Es": "Bruno E",
-    "Bruno EE": "Bruno E",
-    "Camera Al": "Camera Ai",
-    "Cecilia Ot": "Cecilia Ro",
-    "Mehmet AkAE": "Mehmet Ak",
-    "Melis SAE": "Melis Su",
-    "Meric CeAE": "Meric Ce",
-    "Elauterio Lima": "Elauterio Li",
-    "Toualibi Ay": "Ben Ay",
-    "Toulaibi Ay": "Ben Ay",
-    "Manal ManalYa": "Manal Ya",
-    "Pyae H": "Pyae He",
-    "Mehmet K": "Mehmet Ki",
-    "Melis Su": "Melis S",
-    "Ali Yi": "Ali Yi",
-    "Aristides QuAr": "Aristides Qu",
-    "Ismai Al": "Ismail Al",
-    "Muhammad MuhammadZa": "MuhammadZa",
-    "Said .Al": "Said Al",
-    "Manal Manal.Ya": "Manal Ya",
-    "Tania Wib": "Tania Wi",
-    "Syahmi Ra": "Syahmi Rah",
-    "Rahma Far": "Rahma Fa",
-    "Dilan. Ka": "Dilan Ka",
-    "Muhammet Yı": "Muhammet Yi",
-}
-
-MY_EXEMPT_AGENTS = {
-    "Shasha We",
-    "Hatim La",
-    "Said Al",
-    "Ahmad Ma",
-    "Nusaiba Ar",
-    "Joel Go",
-    "Heela An",
-    "Ceydanur Em",
-    "Kenneth Ba",
-    "Abass Ad",
-    "Joy Ot",
-    "Esra Av",
-    "Medisa Ta",
-    "Selay Gu",
-    "Didar Gu",
-    "Taylan Bo",
-    "Yahya Ze",
-    "Mehmet Ki",
-    "David Le",
-    "Oluwasgun Oy",
-    "Mostafa Va",
-    "Suayib Mo",
-    "Mohammed Ba",
-    "Pyae He",
-    "Aymane Ab",
-    "Leyla Go",
-    "Muhammad Ibr",
-    "Ghada Aa",
-    "Abrar Os",
-    "Khadija A",
-}
-
 GCC_COUNTRIES = {
     "Saudi Arabia",
     "United Arab Emirates",
@@ -122,7 +44,7 @@ def _get_google_private_key() -> str:
     )
 
 
-def load_name_fixes_from_sheet() -> dict[str, str]:
+def load_name_data_from_sheet() -> tuple[dict[str, str], set[str]]:
     import httplib2
     from google.oauth2 import service_account
     from googleapiclient.discovery import build as build_google_service
@@ -144,13 +66,9 @@ def load_name_fixes_from_sheet() -> dict[str, str]:
         credentials=credentials,
         cache_discovery=False,
     )
-    request = (
-        service.spreadsheets()
-        .values()
-        .get(
-            spreadsheetId=NAME_FIXES_SPREADSHEET_ID,
-            range=f"{NAME_FIXES_SHEET_NAME}!A:B",
-        )
+    request = service.spreadsheets().values().get(
+        spreadsheetId=NAME_FIXES_SPREADSHEET_ID,
+        range=f"{NAME_FIXES_SHEET_NAME}!A:D",
     )
     auth_http = AuthorizedHttp(
         credentials,
@@ -159,34 +77,39 @@ def load_name_fixes_from_sheet() -> dict[str, str]:
     response = request.execute(http=auth_http, num_retries=0)
     rows = response.get("values", [])
     if not rows:
-        return {}
+        return {}, set()
 
     header = [str(item).strip().casefold() for item in rows[0]]
     wrong_idx = header.index("wrong names") if "wrong names" in header else 0
     right_idx = header.index("right names") if "right names" in header else 1
+    eng_agents_idx = header.index("eng agents") if "eng agents" in header else 3
 
     fixes: dict[str, str] = {}
+    eng_agents: set[str] = set()
     for row in rows[1:]:
         wrong_name = row[wrong_idx].strip() if len(row) > wrong_idx else ""
         right_name = row[right_idx].strip() if len(row) > right_idx else ""
         if wrong_name and right_name:
             fixes[wrong_name] = right_name
-    return fixes
+
+        eng_agent_name = row[eng_agents_idx].strip() if len(row) > eng_agents_idx else ""
+        if eng_agent_name:
+            eng_agents.add(eng_agent_name)
+    return fixes, eng_agents
 
 
 @lru_cache(maxsize=1)
-def _cached_name_fixes_items() -> tuple[tuple[str, str], ...]:
-    return tuple(load_name_fixes_from_sheet().items())
+def _cached_name_data() -> tuple[tuple[tuple[str, str], ...], tuple[str, ...]]:
+    name_fixes, eng_agents = load_name_data_from_sheet()
+    return tuple(name_fixes.items()), tuple(sorted(eng_agents))
 
 
-def get_name_fixes() -> dict[str, str]:
+def get_name_data() -> tuple[dict[str, str], set[str]]:
     try:
-        sheet_fixes = dict(_cached_name_fixes_items())
-        if sheet_fixes:
-            return sheet_fixes
+        name_fix_items, eng_agents = _cached_name_data()
+        return dict(name_fix_items), set(eng_agents)
     except Exception:
-        pass
-    return dict(NAME_FIXES)
+        return {}, set()
 
 
 def clean_agent_name(name):
@@ -750,7 +673,7 @@ def build_outputs(
     lead_name = lead_output_name or f"Lead Splitter - {today.strftime('%d-%m')}.xlsx"
     lead_output_path = output_dir / lead_name
 
-    name_fixes = get_name_fixes()
+    name_fixes, eng_agents = get_name_data()
 
     df = pd.read_excel(input_path, header=2, dtype=str)
     df.columns = [str(c) for c in df.columns]
@@ -816,7 +739,7 @@ def build_outputs(
     country_text = df[i_col].fillna("").astype(str).str.strip()
     agent_text = df[c_col].fillna("").astype(str).str.strip()
     df.loc[country_text.eq("Bangladesh"), b_col] = "TR1-IN"
-    df.loc[country_text.eq("Malaysia") & ~agent_text.isin(MY_EXEMPT_AGENTS), b_col] = "TR1-MY"
+    df.loc[country_text.eq("Malaysia") & ~agent_text.isin(eng_agents), b_col] = "TR1-MY"
 
     outputs: dict[str, Path] = {}
 
