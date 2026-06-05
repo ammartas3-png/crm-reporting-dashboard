@@ -368,8 +368,8 @@ AFF_FONT_HDR = Font(bold=True, color="FFFFFF", name="Arial", size=10)
 AFF_FONT_BOLD = Font(bold=True, name="Arial", size=10)
 AFF_FONT_BOLD_W = Font(bold=True, color="FFFFFF", name="Arial", size=10)
 AFF_FONT_NORM = Font(bold=False, name="Arial", size=10)
-AFF_FONT_TELEMARKETING = Font(bold=False, color="006100", name="Arial", size=10)
-AFF_FILL_TELEMARKETING = PatternFill("solid", start_color="00FF00", end_color="00FF00")
+AFF_FONT_TELEMARKETING = Font(bold=False, color="FFFFFF", name="Arial", size=10)
+AFF_FILL_TELEMARKETING = PatternFill("solid", start_color="008200", end_color="008200")
 
 
 def _aff_write_headers(ws, col_offset, headers) -> None:
@@ -641,7 +641,7 @@ def build_aff_by_status(df, output_path, campaign_col, country_col, desk_col, st
         8,
         7,
         7,
-        1.5,
+        0.8,
         10,
         9,
         22,
@@ -649,7 +649,7 @@ def build_aff_by_status(df, output_path, campaign_col, country_col, desk_col, st
         8,
         7,
         7,
-        1.5,
+        0.8,
         10,
         9,
         22,
