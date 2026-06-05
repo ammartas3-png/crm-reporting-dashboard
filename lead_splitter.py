@@ -363,10 +363,13 @@ AFF_FILL_OFFICE = PatternFill("solid", start_color="BDD7EE", end_color="BDD7EE")
 AFF_FILL_ALT = PatternFill("solid", start_color="F5FBFF", end_color="F5FBFF")
 AFF_FILL_NONE = PatternFill(fill_type=None)
 AFF_FILL_GRAND = PatternFill("solid", start_color="1F4E79", end_color="1F4E79")
+AFF_FILL_DIVIDER = PatternFill("solid", start_color="001848", end_color="001848")
 AFF_FONT_HDR = Font(bold=True, color="FFFFFF", name="Arial", size=10)
 AFF_FONT_BOLD = Font(bold=True, name="Arial", size=10)
 AFF_FONT_BOLD_W = Font(bold=True, color="FFFFFF", name="Arial", size=10)
 AFF_FONT_NORM = Font(bold=False, name="Arial", size=10)
+AFF_FONT_TELEMARKETING = Font(bold=False, color="006100", name="Arial", size=10)
+AFF_FILL_TELEMARKETING = PatternFill("solid", start_color="00FF00", end_color="00FF00")
 
 
 def _aff_write_headers(ws, col_offset, headers) -> None:
@@ -388,6 +391,7 @@ def _aff_write_row(ws, row_i, col_offset, vals, font, fill, skip_fill=0) -> None
         cell = ws.cell(row=row_i, column=col_offset + j + 1, value=val)
         n_cols = len(vals)
         pct_col = n_cols - 1
+        status_col = n_cols - 4
         num_start = n_cols - 3
         if j < skip_fill:
             cell.font = AFF_FONT_NORM
@@ -402,6 +406,9 @@ def _aff_write_row(ws, row_i, col_offset, vals, font, fill, skip_fill=0) -> None
             cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
         if j == pct_col:
             cell.number_format = "0%"
+        if j == status_col and str(val).strip().casefold() == "telemarketing":
+            cell.fill = AFF_FILL_TELEMARKETING
+            cell.font = AFF_FONT_TELEMARKETING
     ws.row_dimensions[row_i].height = 15
 
 
@@ -654,6 +661,13 @@ def build_aff_by_status(df, output_path, campaign_col, country_col, desk_col, st
     ]
     for i, width in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = width
+
+    # Keep divider columns H and P as solid dark separators.
+    for divider_col in (8, 16):
+        for row_i in range(1, ws.max_row + 1):
+            divider_cell = ws.cell(row=row_i, column=divider_col)
+            divider_cell.fill = AFF_FILL_DIVIDER
+            divider_cell.border = AFF_BORDER_DARK
 
     ws.freeze_panes = "A2"
     wb.save(output_path)
