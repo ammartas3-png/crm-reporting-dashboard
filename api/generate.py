@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import cgi
+import base64
 import json
+import mimetypes
+import os
 import re
 import sys
 import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
 from email.message import Message
 from http.server import BaseHTTPRequestHandler
 from io import BytesIO
@@ -26,12 +33,20 @@ import program_b_country_report  # noqa: E402
 APP_REPORT = "report"
 APP_LEAD_SPLITTER = "lead_splitter"
 APP_CR = "cr"
+APP_DATABASE_CHECK = "database_check"
 PROGRAM_A = "program_a"
 PROGRAM_B = "program_b"
 PROGRAM_A_OUTPUT_FILENAME = "crm_powerbi_output.xlsx"
 PROGRAM_B_OUTPUT_FILENAME = "crm_country_report.xlsx"
 MAX_UPLOAD_BYTES = 45 * 1024 * 1024
 XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+DATABASE_CHECK_WEBHOOK_URL = os.environ.get(
+    "DATABASE_CHECK_WEBHOOK_URL",
+    "https://ammartd20.app.n8n.cloud/webhook-test/Database-check",
+).strip()
+DATABASE_CHECK_TIMEOUT_SECONDS = int(
+    os.environ.get("DATABASE_CHECK_TIMEOUT_SECONDS", "240")
+)
 
 
 def _read_static_file(filename: str) -> bytes:
@@ -81,8 +96,8 @@ def _output_filename(raw_name: str, fallback: str) -> str:
 
 def _app_from_form(form: cgi.FieldStorage) -> str:
     app = _field_text(form, "app") or APP_REPORT
-    if app not in {APP_REPORT, APP_LEAD_SPLITTER, APP_CR}:
-        raise ValueError("Please select Report, Lead Splitter, or CR.")
+    if app not in {APP_REPORT, APP_LEAD_SPLITTER, APP_CR, APP_DATABASE_CHECK}:
+        raise ValueError("Please select Report, Lead Splitter, CR, or Database check.")
     return app
 
 
@@ -112,6 +127,104 @@ def _save_upload(
 
 def _has_upload(field: cgi.FieldStorage | None) -> bool:
     return bool(field is not None and field.filename)
+
+
+def _content_disposition_filename(content_disposition: str | None) -> str | None:
+    if not content_disposition:
+        return None
+
+    encoded_match = re.search(r"filename\*=UTF-8''([^;]+)", content_disposition, re.IGNORECASE)
+    if encoded_match:
+        return urllib.parse.unquote(encoded_match.group(1)).strip()
+
+    basic_match = re.search(r'filename="?([^";]+)"?', content_disposition, re.IGNORECASE)
+    if basic_match:
+        return basic_match.group(1).strip()
+    return None
+
+
+def _encode_multipart_upload(file_path: Path, field_name: str = "file") -> tuple[bytes, str]:
+    boundary = f"----CursorBoundary{uuid.uuid4().hex}"
+    filename = _safe_filename(file_path.name, "upload.xlsx")
+    mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    file_bytes = file_path.read_bytes()
+
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="{field_name}"; filename="{filename}"\r\n'
+        f"Content-Type: {mime_type}\r\n\r\n"
+    ).encode("utf-8") + file_bytes + f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+    return body, f"multipart/form-data; boundary={boundary}"
+
+
+def _request_webhook_file(file_path: Path) -> tuple[bytes, str, str]:
+    if not DATABASE_CHECK_WEBHOOK_URL:
+        raise ValueError("Database-check webhook URL is not configured.")
+
+    body, content_type = _encode_multipart_upload(file_path, field_name="file")
+    request = urllib.request.Request(
+        DATABASE_CHECK_WEBHOOK_URL,
+        data=body,
+        method="POST",
+        headers={"Content-Type": content_type, "Accept": "*/*"},
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=DATABASE_CHECK_TIMEOUT_SECONDS) as response:
+            response_bytes = response.read()
+            response_type = response.headers.get("Content-Type", XLSX_CONTENT_TYPE)
+            response_disposition = response.headers.get("Content-Disposition")
+    except urllib.error.HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="replace").strip()
+        message = details or str(exc.reason)
+        raise ValueError(f"Webhook request failed ({exc.code}): {message}") from exc
+    except urllib.error.URLError as exc:
+        raise ValueError(f"Webhook request failed: {exc.reason}") from exc
+
+    if not response_bytes:
+        raise ValueError("Webhook returned an empty response.")
+
+    response_type_lower = response_type.lower()
+    if "application/json" in response_type_lower:
+        try:
+            payload = json.loads(response_bytes.decode("utf-8", errors="replace"))
+        except json.JSONDecodeError:
+            payload = None
+
+        if isinstance(payload, dict):
+            error_message = payload.get("error") or payload.get("message")
+            if error_message:
+                raise ValueError(str(error_message))
+
+            base64_data = (
+                payload.get("file_base64")
+                or payload.get("base64")
+                or payload.get("fileData")
+            )
+            if isinstance(base64_data, str) and base64_data.strip():
+                try:
+                    decoded = base64.b64decode(base64_data, validate=True)
+                except (ValueError, TypeError):
+                    decoded = b""
+                if decoded:
+                    filename = _safe_filename(
+                        payload.get("filename"),
+                        f"database_check_{file_path.stem}.xlsx",
+                    )
+                    if not filename.lower().endswith(".xlsx"):
+                        filename = f"{Path(filename).stem}.xlsx"
+                    return decoded, XLSX_CONTENT_TYPE, filename
+
+        raise ValueError(
+            "Webhook returned JSON instead of a file. Configure it to respond with an .xlsx file."
+        )
+
+    filename = _content_disposition_filename(response_disposition)
+    filename = _safe_filename(filename, f"database_check_{file_path.stem}.xlsx")
+    if not filename.lower().endswith(".xlsx"):
+        filename = f"{Path(filename).stem}.xlsx"
+    return response_bytes, response_type, filename
 
 
 def _parse_form(handler: BaseHTTPRequestHandler) -> cgi.FieldStorage:
@@ -278,6 +391,15 @@ class handler(BaseHTTPRequestHandler):
                     response_filename = selected_output.name
                     response_bytes = selected_output.read_bytes()
                     response_content_type = XLSX_CONTENT_TYPE
+                elif app == APP_DATABASE_CHECK:
+                    database_input = _save_upload(
+                        _field(form, "database_input"),
+                        tmp_path,
+                        "Database check input file",
+                    )
+                    response_bytes, response_content_type, response_filename = _request_webhook_file(
+                        database_input
+                    )
                 else:
                     cr_input = _save_upload(
                         _field(form, "cr_input"),

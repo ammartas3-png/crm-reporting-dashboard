@@ -22,6 +22,7 @@
           <button class="app-tab is-active" type="button" data-app-tab="report">Report</button>
           <button class="app-tab" type="button" data-app-tab="lead_splitter">Lead Splitter</button>
           <button class="app-tab" type="button" data-app-tab="cr">CR</button>
+          <button class="app-tab" type="button" data-app-tab="database_check">Database check</button>
         </div>
       </section>
 
@@ -254,6 +255,31 @@
           <p class="section-note">Export the PowerBI Traffic exported file and upload it here</p>
         </section>
       </section>
+
+      <section class="app-panel" data-app-panel="database_check">
+        <form id="database-form" class="card">
+          <input type="hidden" name="app" value="database_check" />
+          <fieldset>
+            <legend>Database check input</legend>
+            <label>
+              Browse source .xlsx file
+              <input type="file" name="database_input" accept=".xlsx" required />
+            </label>
+          </fieldset>
+
+          <div class="actions">
+            <button id="database-submit-button" type="submit">Run database check</button>
+            <p id="database-status" class="status-line" role="status" aria-live="polite"></p>
+          </div>
+        </form>
+
+        <section class="card compact">
+          <h2>Database check notes</h2>
+          <p class="section-note">
+            The uploaded file is sent to the configured webhook and the returned file is downloaded automatically.
+          </p>
+        </section>
+      </section>
     </main>
 
     <script>
@@ -474,6 +500,9 @@
       const crForm = document.querySelector("#cr-form");
       const crSubmitButton = document.querySelector("#cr-submit-button");
       const crStatus = document.querySelector("#cr-status");
+      const databaseForm = document.querySelector("#database-form");
+      const databaseSubmitButton = document.querySelector("#database-submit-button");
+      const databaseStatus = document.querySelector("#database-status");
 
       function filenameFromResponse(response, fallback) {
         const disposition = response.headers.get("content-disposition");
@@ -588,6 +617,33 @@
           setGenericStatus(crStatus, error.message, "error");
         } finally {
           crSubmitButton.disabled = false;
+        }
+      });
+
+      databaseForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!databaseForm.reportValidity()) {
+          return;
+        }
+
+        databaseSubmitButton.disabled = true;
+        setGenericStatus(
+          databaseStatus,
+          "Uploading file and waiting for webhook response...",
+          "pending",
+        );
+
+        try {
+          await requestDownload(databaseForm, "database_check_output.xlsx");
+          setGenericStatus(
+            databaseStatus,
+            "Done. Your database-check workbook download has started.",
+            "success",
+          );
+        } catch (error) {
+          setGenericStatus(databaseStatus, error.message, "error");
+        } finally {
+          databaseSubmitButton.disabled = false;
         }
       });
 
