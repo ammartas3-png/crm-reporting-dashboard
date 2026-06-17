@@ -233,20 +233,54 @@ def _extract_identity_values(item: dict[str, Any]) -> tuple[Any, Any]:
 def _extract_webhook_data_items(payload: Any) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
 
+    def _try_parse_json_text(text: str) -> Any:
+        stripped = text.strip()
+        if not stripped:
+            return text
+
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            pass
+
+        try:
+            return ast.literal_eval(stripped)
+        except (ValueError, SyntaxError):
+            pass
+
+        return text
+
     def parse_json_like(value: Any) -> Any:
         if not isinstance(value, str):
             return value
         text = value.strip()
-        if not text or text[0] not in "[{":
+        if not text:
             return value
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            try:
-                parsed = ast.literal_eval(text)
-            except (ValueError, SyntaxError):
-                return value
+
+        # n8n or LLM responses may wrap JSON in markdown code fences.
+        fenced_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text, re.IGNORECASE)
+        if fenced_match:
+            text = fenced_match.group(1).strip()
+
+        parsed: Any = text
+        for _ in range(3):
+            next_value = _try_parse_json_text(parsed) if isinstance(parsed, str) else parsed
+            if next_value is parsed:
+                break
+            parsed = next_value
+
+        if not isinstance(parsed, str):
             return parsed
+
+        # Last attempt: extract a JSON-looking object/array embedded in plain text.
+        embedded_match = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", parsed)
+        if embedded_match:
+            embedded = embedded_match.group(1).strip()
+            embedded_parsed = _try_parse_json_text(embedded)
+            if not isinstance(embedded_parsed, str):
+                return embedded_parsed
+
+        return value
 
     def walk(node: Any) -> None:
         node = parse_json_like(node)
