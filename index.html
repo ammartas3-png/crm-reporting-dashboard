@@ -264,16 +264,30 @@
             this browser tab is closed.
           </p>
           <form id="database-auth-form" class="database-auth-form">
-            <label>
-              Username
-              <input id="database-username-input" type="text" autocomplete="off" required />
-            </label>
-            <label>
-              Password
-              <input id="database-password-input" type="password" autocomplete="off" required />
-            </label>
+            <div class="database-auth-grid">
+              <label class="database-auth-label">
+                Username
+                <input
+                  id="database-username-input"
+                  class="database-auth-input"
+                  type="text"
+                  autocomplete="off"
+                  required
+                />
+              </label>
+              <label class="database-auth-label">
+                Password
+                <input
+                  id="database-password-input"
+                  class="database-auth-input"
+                  type="password"
+                  autocomplete="off"
+                  required
+                />
+              </label>
+            </div>
 
-            <div class="actions">
+            <div class="actions database-auth-actions">
               <button id="database-login-button" type="submit">Unlock Database check</button>
               <p id="database-auth-status" class="status-line" role="status" aria-live="polite"></p>
             </div>
