@@ -318,10 +318,53 @@ def _build_database_suggestions(payload: Any) -> dict[tuple[str, str], tuple[Any
             )
 
     if not suggestions:
+        payload_error = _extract_payload_error_message(payload)
+        if payload_error:
+            raise ValueError(payload_error)
         raise ValueError(
             "Webhook JSON did not include usable Data items with CID and brand fields."
         )
     return suggestions
+
+
+def _extract_payload_error_message(payload: Any) -> str | None:
+    candidates: list[str] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, list):
+            for entry in node:
+                walk(entry)
+            return
+        if not isinstance(node, dict):
+            return
+
+        cid, brand = _extract_identity_values(node)
+        if _normalize_match_value(cid) and _normalize_match_value(brand):
+            return
+
+        message = node.get("message")
+        error = node.get("error")
+        hint = node.get("hint")
+        code = node.get("code")
+        status = node.get("status")
+
+        if isinstance(error, str) and error.strip():
+            candidates.append(error.strip())
+        if isinstance(message, str) and message.strip():
+            text = message.strip()
+            prefix = f"{code}" if code not in (None, "") else f"{status}" if status not in (None, "") else ""
+            candidates.append(f"{prefix}: {text}" if prefix else text)
+        if isinstance(hint, str) and hint.strip():
+            candidates.append(f"Hint: {hint.strip()}")
+
+        for value in node.values():
+            if isinstance(value, (list, dict)):
+                walk(value)
+
+    walk(payload)
+    if not candidates:
+        return None
+    return "Webhook response error: " + " | ".join(dict.fromkeys(candidates))
 
 
 def _resolve_input_header_indexes(worksheet) -> tuple[int, dict[str, int]]:
