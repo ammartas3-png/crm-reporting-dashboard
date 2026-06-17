@@ -47,9 +47,10 @@ DATABASE_CHECK_WEBHOOK_URL = os.environ.get(
     "DATABASE_CHECK_WEBHOOK_URL",
     "https://ammartd20.app.n8n.cloud/webhook-test/Database-check",
 ).strip()
-DATABASE_CHECK_TIMEOUT_SECONDS = int(
-    os.environ.get("DATABASE_CHECK_TIMEOUT_SECONDS", "240")
-)
+DATABASE_CHECK_TIMEOUT_SECONDS_RAW = os.environ.get(
+    "DATABASE_CHECK_TIMEOUT_SECONDS",
+    "0",
+).strip()
 DATABASE_CHECK_PASSWORD = os.environ.get("DATABASE_CHECK_PASSWORD", "checker123456")
 DATABASE_CHECK_LOG_SPREADSHEET_ID = os.environ.get(
     "DATABASE_CHECK_LOG_SPREADSHEET_ID",
@@ -929,6 +930,18 @@ def _build_database_check_webhook_upload(input_path: Path) -> tuple[bytes, str]:
     )
 
 
+def _database_check_timeout_seconds() -> float | None:
+    if not DATABASE_CHECK_TIMEOUT_SECONDS_RAW:
+        return None
+    try:
+        timeout_seconds = float(DATABASE_CHECK_TIMEOUT_SECONDS_RAW)
+    except ValueError:
+        return None
+    if timeout_seconds <= 0:
+        return None
+    return timeout_seconds
+
+
 def _request_webhook_json(file_path: Path) -> Any:
     if not DATABASE_CHECK_WEBHOOK_URL:
         raise ValueError("Database-check webhook URL is not configured.")
@@ -940,9 +953,14 @@ def _request_webhook_json(file_path: Path) -> Any:
         method="POST",
         headers={"Content-Type": content_type, "Accept": "*/*"},
     )
+    timeout_seconds = _database_check_timeout_seconds()
 
     try:
-        with urllib.request.urlopen(request, timeout=DATABASE_CHECK_TIMEOUT_SECONDS) as response:
+        if timeout_seconds is None:
+            response_context = urllib.request.urlopen(request)
+        else:
+            response_context = urllib.request.urlopen(request, timeout=timeout_seconds)
+        with response_context as response:
             response_bytes = response.read()
     except urllib.error.HTTPError as exc:
         details = exc.read().decode("utf-8", errors="replace").strip()
