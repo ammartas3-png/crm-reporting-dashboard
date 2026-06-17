@@ -196,7 +196,20 @@ def _item_value(item: dict[str, Any], candidate_keys: list[str]) -> Any:
 def _extract_webhook_data_items(payload: Any) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
 
+    def parse_json_like(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        text = value.strip()
+        if not text or text[0] not in "[{":
+            return value
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return value
+
     def walk(node: Any) -> None:
+        node = parse_json_like(node)
+
         if isinstance(node, list):
             for entry in node:
                 walk(entry)
@@ -216,14 +229,13 @@ def _extract_webhook_data_items(payload: Any) -> list[dict[str, Any]]:
                 data_payload = value
                 break
 
-        if isinstance(data_payload, list):
-            for entry in data_payload:
-                walk(entry)
+        if isinstance(data_payload, (list, dict, str)):
+            walk(data_payload)
 
         for value in node.values():
             if value is data_payload:
                 continue
-            if isinstance(value, (list, dict)):
+            if isinstance(value, (list, dict, str)):
                 walk(value)
 
     walk(payload)
@@ -235,8 +247,20 @@ def _build_database_suggestions(payload: Any) -> dict[tuple[str, str], tuple[Any
     suggestions: dict[tuple[str, str], tuple[Any, Any]] = {}
 
     for item in items:
-        cid = _item_value(item, ["CID", "Account No", "AccountNo", "account no"])
-        brand = _item_value(item, ["Brand", "brand"])
+        cid = _item_value(
+            item,
+            [
+                "CID",
+                "cid",
+                "Account No",
+                "AccountNo",
+                "account no",
+                "account_no",
+                "Customer ID",
+                "CustomerId",
+            ],
+        )
+        brand = _item_value(item, ["Brand", "brand", "Brand Name", "BrandName"])
         cid_key = _normalize_match_value(cid)
         brand_key = _normalize_match_value(brand)
         if not cid_key or not brand_key:
