@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import cgi
-import base64
 import json
 import mimetypes
 import os
@@ -11,7 +10,6 @@ import re
 import sys
 import tempfile
 import urllib.error
-import urllib.parse
 import urllib.request
 import uuid
 from email.message import Message
@@ -19,6 +17,8 @@ from http.server import BaseHTTPRequestHandler
 from io import BytesIO
 from pathlib import Path
 from typing import Any
+
+from openpyxl import Workbook, load_workbook
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -47,6 +47,20 @@ DATABASE_CHECK_WEBHOOK_URL = os.environ.get(
 DATABASE_CHECK_TIMEOUT_SECONDS = int(
     os.environ.get("DATABASE_CHECK_TIMEOUT_SECONDS", "240")
 )
+DATABASE_CHECK_INPUT_COLUMNS = [
+    "Brand",
+    "Account No",
+    "Client Name",
+    "Customer Status",
+    "Country",
+    "Current Assigned Agent",
+    "Last 10 Comments",
+]
+DATABASE_CHECK_OUTPUT_COLUMNS = [
+    *DATABASE_CHECK_INPUT_COLUMNS,
+    "Suggested status",
+    "Reason",
+]
 
 
 def _read_static_file(filename: str) -> bytes:
@@ -129,20 +143,6 @@ def _has_upload(field: cgi.FieldStorage | None) -> bool:
     return bool(field is not None and field.filename)
 
 
-def _content_disposition_filename(content_disposition: str | None) -> str | None:
-    if not content_disposition:
-        return None
-
-    encoded_match = re.search(r"filename\*=UTF-8''([^;]+)", content_disposition, re.IGNORECASE)
-    if encoded_match:
-        return urllib.parse.unquote(encoded_match.group(1)).strip()
-
-    basic_match = re.search(r'filename="?([^";]+)"?', content_disposition, re.IGNORECASE)
-    if basic_match:
-        return basic_match.group(1).strip()
-    return None
-
-
 def _encode_multipart_upload(file_path: Path, field_name: str = "file") -> tuple[bytes, str]:
     boundary = f"----CursorBoundary{uuid.uuid4().hex}"
     filename = _safe_filename(file_path.name, "upload.xlsx")
@@ -158,7 +158,173 @@ def _encode_multipart_upload(file_path: Path, field_name: str = "file") -> tuple
     return body, f"multipart/form-data; boundary={boundary}"
 
 
-def _request_webhook_file(file_path: Path) -> tuple[bytes, str, str]:
+def _normalize_header_key(value: Any) -> str:
+    text = str(value or "").strip().casefold()
+    return re.sub(r"[^a-z0-9]+", "", text)
+
+
+def _normalize_match_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return str(value).casefold()
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if value.is_integer():
+            return str(int(value))
+        return str(value).strip().casefold()
+
+    text = str(value).strip()
+    if not text:
+        return ""
+    numeric_match = re.fullmatch(r"-?\d+(?:\.0+)?", text)
+    if numeric_match:
+        return str(int(float(text)))
+    return text.casefold()
+
+
+def _item_value(item: dict[str, Any], candidate_keys: list[str]) -> Any:
+    normalized_map = {_normalize_header_key(key): value for key, value in item.items()}
+    for candidate in candidate_keys:
+        key = _normalize_header_key(candidate)
+        if key in normalized_map:
+            return normalized_map[key]
+    return ""
+
+
+def _extract_webhook_data_items(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if _normalize_header_key(key) == "data" and isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def _build_database_suggestions(payload: Any) -> dict[tuple[str, str], tuple[Any, Any]]:
+    items = _extract_webhook_data_items(payload)
+    suggestions: dict[tuple[str, str], tuple[Any, Any]] = {}
+
+    for item in items:
+        cid = _item_value(item, ["CID", "Account No", "AccountNo", "account no"])
+        brand = _item_value(item, ["Brand", "brand"])
+        cid_key = _normalize_match_value(cid)
+        brand_key = _normalize_match_value(brand)
+        if not cid_key or not brand_key:
+            continue
+
+        suggested_status = _item_value(
+            item,
+            [
+                "Suggested status",
+                "Suggested Status",
+                "suggested_status",
+                "SuggestedStatus",
+                "status",
+            ],
+        )
+        reason = _item_value(item, ["Reason", "reason", "Explanation", "Comment"])
+        key = (cid_key, brand_key)
+
+        existing = suggestions.get(key)
+        if existing is None:
+            suggestions[key] = (suggested_status, reason)
+        else:
+            current_status, current_reason = existing
+            suggestions[key] = (
+                current_status if current_status else suggested_status,
+                current_reason if current_reason else reason,
+            )
+
+    if not suggestions:
+        raise ValueError(
+            "Webhook JSON did not include usable Data items with CID and brand fields."
+        )
+    return suggestions
+
+
+def _resolve_input_header_indexes(worksheet) -> tuple[int, dict[str, int]]:
+    required_keys = {column: _normalize_header_key(column) for column in DATABASE_CHECK_INPUT_COLUMNS}
+    best_row_index = 0
+    best_count = -1
+    best_index_map: dict[str, int] = {}
+
+    for row_index in (1, 2, 3):
+        row_values = next(
+            worksheet.iter_rows(min_row=row_index, max_row=row_index, values_only=True),
+            (),
+        )
+        normalized_to_index: dict[str, int] = {}
+        for col_index, value in enumerate(row_values):
+            normalized = _normalize_header_key(value)
+            if normalized and normalized not in normalized_to_index:
+                normalized_to_index[normalized] = col_index
+
+        found_labels = {
+            label: normalized_to_index[key]
+            for label, key in required_keys.items()
+            if key in normalized_to_index
+        }
+        if len(found_labels) > best_count:
+            best_count = len(found_labels)
+            best_row_index = row_index
+            best_index_map = found_labels
+        if len(found_labels) == len(DATABASE_CHECK_INPUT_COLUMNS):
+            return row_index, found_labels
+
+    missing = [label for label in DATABASE_CHECK_INPUT_COLUMNS if label not in best_index_map]
+    raise ValueError(
+        "Could not find required headers in rows 1 to 3. Missing columns: "
+        + ", ".join(missing)
+    )
+
+
+def _build_database_check_output(input_path: Path, payload: Any, output_path: Path) -> None:
+    suggestions = _build_database_suggestions(payload)
+
+    workbook = load_workbook(input_path, data_only=True)
+    worksheet = workbook.active
+    header_row_index, header_indexes = _resolve_input_header_indexes(worksheet)
+
+    output_workbook = Workbook()
+    output_sheet = output_workbook.active
+    output_sheet.title = "Database check"
+    output_sheet.append(DATABASE_CHECK_OUTPUT_COLUMNS)
+
+    matched_count = 0
+    for row in worksheet.iter_rows(min_row=header_row_index + 1, values_only=True):
+        if not row or all(value in (None, "") for value in row):
+            continue
+        account_no = row[header_indexes["Account No"]]
+        brand = row[header_indexes["Brand"]]
+        match_key = (_normalize_match_value(account_no), _normalize_match_value(brand))
+        if not all(match_key) or match_key not in suggestions:
+            continue
+
+        suggested_status, reason = suggestions[match_key]
+        output_row = [row[header_indexes[column]] for column in DATABASE_CHECK_INPUT_COLUMNS]
+        output_row.extend([suggested_status, reason])
+        output_sheet.append(output_row)
+        matched_count += 1
+
+    if matched_count == 0:
+        raise ValueError("No rows matched CID + brand between webhook Data and input file.")
+
+    for col_idx, header in enumerate(DATABASE_CHECK_OUTPUT_COLUMNS, start=1):
+        column_values = [
+            str(output_sheet.cell(r, col_idx).value or "")
+            for r in range(1, min(output_sheet.max_row, 300) + 1)
+        ]
+        max_len = max([len(str(header)), *(len(value) for value in column_values)])
+        output_sheet.column_dimensions[chr(64 + col_idx)].width = min(max_len + 2, 48)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_workbook.save(output_path)
+
+
+def _request_webhook_json(file_path: Path) -> Any:
     if not DATABASE_CHECK_WEBHOOK_URL:
         raise ValueError("Database-check webhook URL is not configured.")
 
@@ -173,8 +339,6 @@ def _request_webhook_file(file_path: Path) -> tuple[bytes, str, str]:
     try:
         with urllib.request.urlopen(request, timeout=DATABASE_CHECK_TIMEOUT_SECONDS) as response:
             response_bytes = response.read()
-            response_type = response.headers.get("Content-Type", XLSX_CONTENT_TYPE)
-            response_disposition = response.headers.get("Content-Disposition")
     except urllib.error.HTTPError as exc:
         details = exc.read().decode("utf-8", errors="replace").strip()
         message = details or str(exc.reason)
@@ -185,46 +349,18 @@ def _request_webhook_file(file_path: Path) -> tuple[bytes, str, str]:
     if not response_bytes:
         raise ValueError("Webhook returned an empty response.")
 
-    response_type_lower = response_type.lower()
-    if "application/json" in response_type_lower:
-        try:
-            payload = json.loads(response_bytes.decode("utf-8", errors="replace"))
-        except json.JSONDecodeError:
-            payload = None
-
-        if isinstance(payload, dict):
-            error_message = payload.get("error") or payload.get("message")
-            if error_message:
-                raise ValueError(str(error_message))
-
-            base64_data = (
-                payload.get("file_base64")
-                or payload.get("base64")
-                or payload.get("fileData")
-            )
-            if isinstance(base64_data, str) and base64_data.strip():
-                try:
-                    decoded = base64.b64decode(base64_data, validate=True)
-                except (ValueError, TypeError):
-                    decoded = b""
-                if decoded:
-                    filename = _safe_filename(
-                        payload.get("filename"),
-                        f"database_check_{file_path.stem}.xlsx",
-                    )
-                    if not filename.lower().endswith(".xlsx"):
-                        filename = f"{Path(filename).stem}.xlsx"
-                    return decoded, XLSX_CONTENT_TYPE, filename
-
+    try:
+        payload = json.loads(response_bytes.decode("utf-8", errors="replace"))
+    except json.JSONDecodeError as exc:
         raise ValueError(
-            "Webhook returned JSON instead of a file. Configure it to respond with an .xlsx file."
-        )
+            "Webhook response must be JSON containing a Data array with CID and brand."
+        ) from exc
 
-    filename = _content_disposition_filename(response_disposition)
-    filename = _safe_filename(filename, f"database_check_{file_path.stem}.xlsx")
-    if not filename.lower().endswith(".xlsx"):
-        filename = f"{Path(filename).stem}.xlsx"
-    return response_bytes, response_type, filename
+    if isinstance(payload, dict):
+        error_message = payload.get("error") or payload.get("message")
+        if error_message:
+            raise ValueError(str(error_message))
+    return payload
 
 
 def _parse_form(handler: BaseHTTPRequestHandler) -> cgi.FieldStorage:
@@ -397,9 +533,16 @@ class handler(BaseHTTPRequestHandler):
                         tmp_path,
                         "Database check input file",
                     )
-                    response_bytes, response_content_type, response_filename = _request_webhook_file(
-                        database_input
+                    webhook_payload = _request_webhook_json(database_input)
+                    response_filename = f"database_check_{database_input.stem}.xlsx"
+                    database_output = tmp_path / response_filename
+                    _build_database_check_output(
+                        database_input,
+                        webhook_payload,
+                        database_output,
                     )
+                    response_bytes = database_output.read_bytes()
+                    response_content_type = XLSX_CONTENT_TYPE
                 else:
                     cr_input = _save_upload(
                         _field(form, "cr_input"),
