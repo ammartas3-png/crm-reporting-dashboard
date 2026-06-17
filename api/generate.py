@@ -5,6 +5,7 @@ from __future__ import annotations
 import cgi
 import ast
 import csv
+from datetime import datetime, timezone
 import json
 import mimetypes
 import os
@@ -49,6 +50,16 @@ DATABASE_CHECK_WEBHOOK_URL = os.environ.get(
 DATABASE_CHECK_TIMEOUT_SECONDS = int(
     os.environ.get("DATABASE_CHECK_TIMEOUT_SECONDS", "240")
 )
+DATABASE_CHECK_PASSWORD = os.environ.get("DATABASE_CHECK_PASSWORD", "checker123456")
+DATABASE_CHECK_LOG_SPREADSHEET_ID = os.environ.get(
+    "DATABASE_CHECK_LOG_SPREADSHEET_ID",
+    "1wqF8cCsPI8jFcxQ-nwMRGzwvcxP-ynfJyOXGSJEhk-E",
+).strip()
+DATABASE_CHECK_LOG_SHEET_NAME = os.environ.get("DATABASE_CHECK_LOG_SHEET_NAME", "").strip()
+DATABASE_CHECK_LOG_SERVICE_ACCOUNT_EMAIL = os.environ.get(
+    "DATABASE_CHECK_LOG_SERVICE_ACCOUNT_EMAIL",
+    "matservice@mitservice.iam.gserviceaccount.com",
+).strip()
 DATABASE_CHECK_INPUT_COLUMNS = [
     "Brand",
     "Account No",
@@ -63,6 +74,7 @@ DATABASE_CHECK_OUTPUT_COLUMNS = [
     "Suggested status",
     "Reason",
 ]
+_DATABASE_CHECK_LOG_SHEET_CACHE: str | None = None
 
 
 def _read_static_file(filename: str) -> bytes:
@@ -143,6 +155,173 @@ def _save_upload(
 
 def _has_upload(field: cgi.FieldStorage | None) -> bool:
     return bool(field is not None and field.filename)
+
+
+def _get_google_private_key() -> str:
+    for key in ("gmail", "GMAIL", "GOOGLE_PRIVATE_KEY"):
+        raw = os.environ.get(key)
+        if raw:
+            return raw.strip().replace("\\n", "\n")
+    raise ValueError(
+        "Missing Google private key. Set environment variable 'gmail' with the service account private key."
+    )
+
+
+def _build_sheets_service(scopes: list[str]) -> Any:
+    try:
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build as build_google_service
+    except ImportError as exc:
+        raise ValueError(
+            "Google Sheets dependencies are missing. Install google-api-python-client and google-auth."
+        ) from exc
+
+    service_account_info = {
+        "type": "service_account",
+        "client_email": DATABASE_CHECK_LOG_SERVICE_ACCOUNT_EMAIL,
+        "private_key": _get_google_private_key(),
+        "token_uri": "https://oauth2.googleapis.com/token",
+    }
+    credentials = service_account.Credentials.from_service_account_info(
+        service_account_info,
+        scopes=scopes,
+    )
+    return build_google_service("sheets", "v4", credentials=credentials, cache_discovery=False)
+
+
+def _quote_sheet_name(sheet_name: str) -> str:
+    return "'" + sheet_name.replace("'", "''") + "'"
+
+
+def _parse_updated_row_number(updated_range: str) -> int | None:
+    if not updated_range:
+        return None
+    match = re.search(r"![A-Z]+(\d+)(?::[A-Z]+\d+)?$", updated_range)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _resolve_database_check_log_sheet_name(service: Any) -> str:
+    global _DATABASE_CHECK_LOG_SHEET_CACHE
+    if _DATABASE_CHECK_LOG_SHEET_CACHE:
+        return _DATABASE_CHECK_LOG_SHEET_CACHE
+
+    metadata = service.spreadsheets().get(
+        spreadsheetId=DATABASE_CHECK_LOG_SPREADSHEET_ID,
+        fields="sheets(properties(title))",
+    ).execute()
+    titles = [
+        sheet.get("properties", {}).get("title", "")
+        for sheet in metadata.get("sheets", [])
+        if sheet.get("properties", {}).get("title")
+    ]
+    if not titles:
+        raise ValueError("Database-check log spreadsheet has no sheets.")
+
+    if DATABASE_CHECK_LOG_SHEET_NAME and DATABASE_CHECK_LOG_SHEET_NAME in titles:
+        _DATABASE_CHECK_LOG_SHEET_CACHE = DATABASE_CHECK_LOG_SHEET_NAME
+        return _DATABASE_CHECK_LOG_SHEET_CACHE
+
+    required_headers = {"username", "dateandtime", "outputs"}
+    for title in titles:
+        header_response = service.spreadsheets().values().get(
+            spreadsheetId=DATABASE_CHECK_LOG_SPREADSHEET_ID,
+            range=f"{_quote_sheet_name(title)}!1:1",
+        ).execute()
+        header_values = header_response.get("values") or [[]]
+        header_row = header_values[0] if header_values else []
+        normalized_headers = {_normalize_header_key(value) for value in header_row}
+        if required_headers.issubset(normalized_headers):
+            _DATABASE_CHECK_LOG_SHEET_CACHE = title
+            return _DATABASE_CHECK_LOG_SHEET_CACHE
+
+    raise ValueError(
+        "Could not find a log sheet with headers: username, Date and time, outputs."
+    )
+
+
+def _append_database_check_login(username: str) -> dict[str, Any]:
+    if not DATABASE_CHECK_LOG_SPREADSHEET_ID:
+        raise ValueError("Database-check log spreadsheet ID is not configured.")
+
+    service = _build_sheets_service(["https://www.googleapis.com/auth/spreadsheets"])
+    sheet_name = _resolve_database_check_log_sheet_name(service)
+    login_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    append_response = service.spreadsheets().values().append(
+        spreadsheetId=DATABASE_CHECK_LOG_SPREADSHEET_ID,
+        range=f"{_quote_sheet_name(sheet_name)}!A:C",
+        valueInputOption="USER_ENTERED",
+        insertDataOption="INSERT_ROWS",
+        body={"values": [[username, login_time, 0]]},
+    ).execute()
+
+    updated_range = append_response.get("updates", {}).get("updatedRange", "")
+    row_number = _parse_updated_row_number(updated_range)
+    if row_number is None:
+        raise ValueError("Could not determine login row in the Database-check log sheet.")
+    return {"username": username, "login_time": login_time, "log_row": row_number}
+
+
+def _increment_database_check_output(username: str, log_row: int) -> int:
+    service = _build_sheets_service(["https://www.googleapis.com/auth/spreadsheets"])
+    sheet_name = _resolve_database_check_log_sheet_name(service)
+    row_range = f"{_quote_sheet_name(sheet_name)}!A{log_row}:C{log_row}"
+    row_response = service.spreadsheets().values().get(
+        spreadsheetId=DATABASE_CHECK_LOG_SPREADSHEET_ID,
+        range=row_range,
+    ).execute()
+    row_values = row_response.get("values", [])
+    if not row_values:
+        raise ValueError("Database check session was not found. Please log in again.")
+
+    row = row_values[0]
+    logged_username = str(row[0]).strip() if row else ""
+    if not logged_username or logged_username.casefold() != username.casefold():
+        raise ValueError("Database check session is invalid. Please log in again.")
+
+    current_outputs_raw = row[2] if len(row) >= 3 else 0
+    try:
+        current_outputs = int(float(str(current_outputs_raw).strip() or "0"))
+    except ValueError:
+        current_outputs = 0
+    next_outputs = current_outputs + 1
+
+    service.spreadsheets().values().update(
+        spreadsheetId=DATABASE_CHECK_LOG_SPREADSHEET_ID,
+        range=f"{_quote_sheet_name(sheet_name)}!C{log_row}",
+        valueInputOption="USER_ENTERED",
+        body={"values": [[next_outputs]]},
+    ).execute()
+    return next_outputs
+
+
+def _database_check_login(form: cgi.FieldStorage) -> dict[str, Any]:
+    username = _field_text(form, "database_username")
+    password = _field_text(form, "database_password")
+
+    if not username:
+        raise ValueError("Username is required.")
+    if password != DATABASE_CHECK_PASSWORD:
+        raise ValueError("Incorrect password.")
+
+    login_row = _append_database_check_login(username)
+    return {"ok": True, **login_row}
+
+
+def _database_check_validate_session_and_count_output(form: cgi.FieldStorage) -> None:
+    username = _field_text(form, "database_username")
+    row_text = _field_text(form, "database_log_row")
+    if not username or not row_text:
+        raise ValueError("Please log in to Database check first.")
+    try:
+        log_row = int(row_text)
+    except ValueError as exc:
+        raise ValueError("Database check session is invalid. Please log in again.") from exc
+    if log_row < 1:
+        raise ValueError("Database check session is invalid. Please log in again.")
+
+    _increment_database_check_output(username, log_row)
 
 
 def _encode_multipart_upload(file_path: Path, field_name: str = "file") -> tuple[bytes, str]:
@@ -795,6 +974,22 @@ class handler(BaseHTTPRequestHandler):
         try:
             form = _parse_form(self)
             app = _app_from_form(form)
+            if app == APP_DATABASE_CHECK:
+                database_action = (_field_text(form, "database_action") or "run").casefold()
+                if database_action == "login":
+                    payload = _database_check_login(form)
+                    response_bytes = _json_bytes(payload)
+                    response_content_type = "application/json; charset=utf-8"
+                    response_filename = ""
+                    self.send_response(200)
+                    self.send_header("Content-Type", response_content_type)
+                    self.send_header("Content-Length", str(len(response_bytes)))
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(response_bytes)
+                    return
+                if database_action not in {"run", "generate", "output"}:
+                    raise ValueError("Invalid database-check action.")
 
             with tempfile.TemporaryDirectory() as tmp:
                 tmp_path = Path(tmp)
@@ -896,6 +1091,7 @@ class handler(BaseHTTPRequestHandler):
                     response_bytes = selected_output.read_bytes()
                     response_content_type = XLSX_CONTENT_TYPE
                 elif app == APP_DATABASE_CHECK:
+                    _database_check_validate_session_and_count_output(form)
                     database_input = _save_upload(
                         _field(form, "database_input"),
                         tmp_path,

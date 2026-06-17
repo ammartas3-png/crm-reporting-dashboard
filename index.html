@@ -257,8 +257,34 @@
       </section>
 
       <section class="app-panel" data-app-panel="database_check">
-        <form id="database-form" class="card">
+        <section id="database-auth-card" class="card">
+          <h2>Database check access</h2>
+          <p class="section-note">
+            Enter your username and password to unlock this app. Your session stays active until
+            this browser tab is closed.
+          </p>
+          <form id="database-auth-form" class="database-auth-form">
+            <label>
+              Username
+              <input id="database-username-input" type="text" autocomplete="off" required />
+            </label>
+            <label>
+              Password
+              <input id="database-password-input" type="password" autocomplete="off" required />
+            </label>
+
+            <div class="actions">
+              <button id="database-login-button" type="submit">Unlock Database check</button>
+              <p id="database-auth-status" class="status-line" role="status" aria-live="polite"></p>
+            </div>
+          </form>
+        </section>
+
+        <form id="database-form" class="card" hidden>
           <input type="hidden" name="app" value="database_check" />
+          <input type="hidden" name="database_action" value="run" />
+          <input type="hidden" id="database-session-username" name="database_username" />
+          <input type="hidden" id="database-session-row" name="database_log_row" />
           <fieldset>
             <legend>Database check input</legend>
             <label>
@@ -273,7 +299,7 @@
           </div>
         </form>
 
-        <section class="card compact">
+        <section id="database-notes-card" class="card compact" hidden>
           <h2>Database check notes</h2>
           <p class="section-note">
             The uploaded file is sent to the configured webhook and the returned file is downloaded automatically.
@@ -285,6 +311,7 @@
     <script>
       const tabButtons = [...document.querySelectorAll(".app-tab")];
       const appPanels = [...document.querySelectorAll(".app-panel")];
+      const DATABASE_CHECK_SESSION_KEY = "databaseCheckSession";
 
       function activateTab(appKey) {
         tabButtons.forEach((button) => {
@@ -297,7 +324,11 @@
 
       tabButtons.forEach((button) => {
         button.addEventListener("click", () => {
-          activateTab(button.dataset.appTab);
+          const appKey = button.dataset.appTab;
+          activateTab(appKey);
+          if (appKey === "database_check") {
+            syncDatabaseAccessUI();
+          }
         });
       });
 
@@ -343,6 +374,62 @@
       function setGenericStatus(element, message, type = "") {
         element.textContent = message;
         element.className = `status-line ${type}`.trim();
+      }
+
+      function readDatabaseSession() {
+        try {
+          const raw = sessionStorage.getItem(DATABASE_CHECK_SESSION_KEY);
+          if (!raw) {
+            return null;
+          }
+          const parsed = JSON.parse(raw);
+          const username = String(parsed?.username || "").trim();
+          const logRow = Number(parsed?.logRow);
+          if (!username || !Number.isInteger(logRow) || logRow < 1) {
+            return null;
+          }
+          return { username, logRow };
+        } catch {
+          return null;
+        }
+      }
+
+      function saveDatabaseSession(session) {
+        sessionStorage.setItem(DATABASE_CHECK_SESSION_KEY, JSON.stringify(session));
+      }
+
+      function clearDatabaseSession() {
+        sessionStorage.removeItem(DATABASE_CHECK_SESSION_KEY);
+      }
+
+      function applyDatabaseSessionToForm(session) {
+        if (!session) {
+          databaseSessionUsername.value = "";
+          databaseSessionRow.value = "";
+          return;
+        }
+        databaseSessionUsername.value = session.username;
+        databaseSessionRow.value = String(session.logRow);
+      }
+
+      function setDatabaseUnlocked(unlocked) {
+        databaseAuthCard.hidden = unlocked;
+        databaseForm.hidden = !unlocked;
+        databaseNotesCard.hidden = !unlocked;
+      }
+
+      function syncDatabaseAccessUI() {
+        const session = readDatabaseSession();
+        applyDatabaseSessionToForm(session);
+        setDatabaseUnlocked(Boolean(session));
+        if (!session) {
+          setGenericStatus(
+            databaseStatus,
+            "Please sign in with username and password to use Database check.",
+            "",
+          );
+          setGenericStatus(databaseAuthStatus, "", "");
+        }
       }
 
       function selectedProgram() {
@@ -503,6 +590,15 @@
       const databaseForm = document.querySelector("#database-form");
       const databaseSubmitButton = document.querySelector("#database-submit-button");
       const databaseStatus = document.querySelector("#database-status");
+      const databaseAuthCard = document.querySelector("#database-auth-card");
+      const databaseNotesCard = document.querySelector("#database-notes-card");
+      const databaseAuthForm = document.querySelector("#database-auth-form");
+      const databaseUsernameInput = document.querySelector("#database-username-input");
+      const databasePasswordInput = document.querySelector("#database-password-input");
+      const databaseLoginButton = document.querySelector("#database-login-button");
+      const databaseAuthStatus = document.querySelector("#database-auth-status");
+      const databaseSessionUsername = document.querySelector("#database-session-username");
+      const databaseSessionRow = document.querySelector("#database-session-row");
 
       function filenameFromResponse(response, fallback) {
         const disposition = response.headers.get("content-disposition");
@@ -620,8 +716,81 @@
         }
       });
 
+      databaseAuthForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!databaseAuthForm.reportValidity()) {
+          return;
+        }
+
+        const username = databaseUsernameInput.value.trim();
+        if (!username) {
+          setGenericStatus(databaseAuthStatus, "Username is required.", "error");
+          return;
+        }
+
+        databaseLoginButton.disabled = true;
+        setGenericStatus(databaseAuthStatus, "Signing in...", "pending");
+
+        try {
+          const formData = new FormData();
+          formData.set("app", "database_check");
+          formData.set("database_action", "login");
+          formData.set("database_username", username);
+          formData.set("database_password", databasePasswordInput.value);
+
+          const response = await fetch("/api/generate", {
+            method: "POST",
+            body: formData,
+          });
+
+          if (!response.ok) {
+            const message = await readErrorMessage(response, "Unable to sign in.");
+            throw new Error(message);
+          }
+
+          const payload = await response.json();
+          const session = {
+            username: String(payload?.username || "").trim(),
+            logRow: Number(payload?.log_row),
+          };
+          if (!session.username || !Number.isInteger(session.logRow) || session.logRow < 1) {
+            throw new Error("Login response is invalid. Please try again.");
+          }
+
+          saveDatabaseSession(session);
+          applyDatabaseSessionToForm(session);
+          setDatabaseUnlocked(true);
+          databasePasswordInput.value = "";
+          setGenericStatus(databaseAuthStatus, `Logged in as ${session.username}.`, "success");
+          setGenericStatus(
+            databaseStatus,
+            "Signed in. Upload a file and run Database check.",
+            "success",
+          );
+        } catch (error) {
+          clearDatabaseSession();
+          applyDatabaseSessionToForm(null);
+          setDatabaseUnlocked(false);
+          setGenericStatus(databaseAuthStatus, error.message, "error");
+        } finally {
+          databaseLoginButton.disabled = false;
+        }
+      });
+
       databaseForm.addEventListener("submit", async (event) => {
         event.preventDefault();
+        const session = readDatabaseSession();
+        if (!session) {
+          syncDatabaseAccessUI();
+          setGenericStatus(
+            databaseStatus,
+            "Please sign in with username and password to use Database check.",
+            "error",
+          );
+          return;
+        }
+        applyDatabaseSessionToForm(session);
+
         if (!databaseForm.reportValidity()) {
           return;
         }
@@ -642,6 +811,10 @@
           );
         } catch (error) {
           setGenericStatus(databaseStatus, error.message, "error");
+          if (/log in/i.test(error.message || "")) {
+            clearDatabaseSession();
+            syncDatabaseAccessUI();
+          }
         } finally {
           databaseSubmitButton.disabled = false;
         }
@@ -649,6 +822,7 @@
 
       syncProgramFields();
       addCrmRow();
+      syncDatabaseAccessUI();
       activateTab("report");
     </script>
   </body>
