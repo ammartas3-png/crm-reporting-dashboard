@@ -194,13 +194,40 @@ def _item_value(item: dict[str, Any], candidate_keys: list[str]) -> Any:
 
 
 def _extract_webhook_data_items(payload: Any) -> list[dict[str, Any]]:
-    if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
-    if isinstance(payload, dict):
-        for key, value in payload.items():
-            if _normalize_header_key(key) == "data" and isinstance(value, list):
-                return [item for item in value if isinstance(item, dict)]
-    return []
+    items: list[dict[str, Any]] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, list):
+            for entry in node:
+                walk(entry)
+            return
+
+        if not isinstance(node, dict):
+            return
+
+        cid = _item_value(node, ["CID", "Account No", "AccountNo", "account no"])
+        brand = _item_value(node, ["Brand", "brand"])
+        if _normalize_match_value(cid) and _normalize_match_value(brand):
+            items.append(node)
+
+        data_payload = None
+        for key, value in node.items():
+            if _normalize_header_key(key) == "data":
+                data_payload = value
+                break
+
+        if isinstance(data_payload, list):
+            for entry in data_payload:
+                walk(entry)
+
+        for value in node.values():
+            if value is data_payload:
+                continue
+            if isinstance(value, (list, dict)):
+                walk(value)
+
+    walk(payload)
+    return items
 
 
 def _build_database_suggestions(payload: Any) -> dict[tuple[str, str], tuple[Any, Any]]:
