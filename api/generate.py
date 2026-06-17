@@ -74,6 +74,18 @@ DATABASE_CHECK_OUTPUT_COLUMNS = [
     "Suggested status",
     "Reason",
 ]
+DATABASE_CHECK_WEBHOOK_COLUMNS = [
+    "Brand",
+    "Account No",
+    "Last 10 Comments",
+    "Customer Status",
+]
+DATABASE_CHECK_WEBHOOK_KEY_BY_COLUMN = {
+    "Brand": "brand",
+    "Account No": "account no",
+    "Last 10 Comments": "last 10 comments",
+    "Customer Status": "customer status",
+}
 _DATABASE_CHECK_LOG_SHEET_CACHE: str | None = None
 
 
@@ -324,19 +336,34 @@ def _database_check_validate_session_and_count_output(form: cgi.FieldStorage) ->
     _increment_database_check_output(username, log_row)
 
 
-def _encode_multipart_upload(file_path: Path, field_name: str = "file") -> tuple[bytes, str]:
+def _encode_multipart_bytes(
+    *,
+    filename: str,
+    file_bytes: bytes,
+    mime_type: str,
+    field_name: str = "file",
+) -> tuple[bytes, str]:
     boundary = f"----CursorBoundary{uuid.uuid4().hex}"
-    filename = _safe_filename(file_path.name, "upload.xlsx")
-    mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-    file_bytes = file_path.read_bytes()
-
+    safe_name = _safe_filename(filename, "upload.bin")
     body = (
         f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="{field_name}"; filename="{filename}"\r\n'
+        f'Content-Disposition: form-data; name="{field_name}"; filename="{safe_name}"\r\n'
         f"Content-Type: {mime_type}\r\n\r\n"
     ).encode("utf-8") + file_bytes + f"\r\n--{boundary}--\r\n".encode("utf-8")
 
     return body, f"multipart/form-data; boundary={boundary}"
+
+
+def _encode_multipart_upload(file_path: Path, field_name: str = "file") -> tuple[bytes, str]:
+    filename = _safe_filename(file_path.name, "upload.xlsx")
+    mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    file_bytes = file_path.read_bytes()
+    return _encode_multipart_bytes(
+        filename=filename,
+        file_bytes=file_bytes,
+        mime_type=mime_type,
+        field_name=field_name,
+    )
 
 
 def _normalize_header_key(value: Any) -> str:
@@ -869,11 +896,44 @@ def _build_database_check_output(input_path: Path, payload: Any, output_path: Pa
     output_workbook.save(output_path)
 
 
+def _build_database_check_webhook_records(input_path: Path) -> list[dict[str, Any]]:
+    workbook = load_workbook(input_path, data_only=True)
+    worksheet = workbook.active
+    header_row_index, header_indexes = _resolve_input_header_indexes(worksheet)
+
+    records: list[dict[str, Any]] = []
+    for row in worksheet.iter_rows(min_row=header_row_index + 1, values_only=True):
+        if not row or all(value in (None, "") for value in row):
+            continue
+        record = {
+            DATABASE_CHECK_WEBHOOK_KEY_BY_COLUMN[column]: row[header_indexes[column]]
+            for column in DATABASE_CHECK_WEBHOOK_COLUMNS
+        }
+        if all(value in (None, "") for value in record.values()):
+            continue
+        records.append(record)
+
+    if not records:
+        raise ValueError("No usable rows were found to build the Database-check JSON payload.")
+    return records
+
+
+def _build_database_check_webhook_upload(input_path: Path) -> tuple[bytes, str]:
+    records = _build_database_check_webhook_records(input_path)
+    payload_bytes = json.dumps({"data": records}, ensure_ascii=False).encode("utf-8")
+    return _encode_multipart_bytes(
+        filename=f"{input_path.stem}_database_check_payload.json",
+        file_bytes=payload_bytes,
+        mime_type="application/json",
+        field_name="file",
+    )
+
+
 def _request_webhook_json(file_path: Path) -> Any:
     if not DATABASE_CHECK_WEBHOOK_URL:
         raise ValueError("Database-check webhook URL is not configured.")
 
-    body, content_type = _encode_multipart_upload(file_path, field_name="file")
+    body, content_type = _build_database_check_webhook_upload(file_path)
     request = urllib.request.Request(
         DATABASE_CHECK_WEBHOOK_URL,
         data=body,
