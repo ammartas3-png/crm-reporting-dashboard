@@ -645,11 +645,16 @@ def _build_database_check_output(input_path: Path, payload: Any, output_path: Pa
     output_sheet = output_workbook.active
     output_sheet.title = "Database check"
     output_sheet.append(DATABASE_CHECK_OUTPUT_COLUMNS)
+    cleaned_input_sheet = output_workbook.create_sheet("Input cleanup")
+    cleaned_input_sheet.append(DATABASE_CHECK_INPUT_COLUMNS)
 
     matched_count = 0
     for row in worksheet.iter_rows(min_row=header_row_index + 1, values_only=True):
         if not row or all(value in (None, "") for value in row):
             continue
+        cleaned_row = [row[header_indexes[column]] for column in DATABASE_CHECK_INPUT_COLUMNS]
+        cleaned_input_sheet.append(cleaned_row)
+
         account_no = row[header_indexes["Account No"]]
         brand = row[header_indexes["Brand"]]
         match_key = (_normalize_match_value(account_no), _normalize_match_value(brand))
@@ -657,7 +662,7 @@ def _build_database_check_output(input_path: Path, payload: Any, output_path: Pa
             continue
 
         suggested_status, reason = suggestions[match_key]
-        output_row = [row[header_indexes[column]] for column in DATABASE_CHECK_INPUT_COLUMNS]
+        output_row = list(cleaned_row)
         output_row.extend([suggested_status, reason])
         output_sheet.append(output_row)
         matched_count += 1
@@ -672,6 +677,14 @@ def _build_database_check_output(input_path: Path, payload: Any, output_path: Pa
         ]
         max_len = max([len(str(header)), *(len(value) for value in column_values)])
         output_sheet.column_dimensions[chr(64 + col_idx)].width = min(max_len + 2, 48)
+
+    for col_idx, header in enumerate(DATABASE_CHECK_INPUT_COLUMNS, start=1):
+        column_values = [
+            str(cleaned_input_sheet.cell(r, col_idx).value or "")
+            for r in range(1, min(cleaned_input_sheet.max_row, 300) + 1)
+        ]
+        max_len = max([len(str(header)), *(len(value) for value in column_values)])
+        cleaned_input_sheet.column_dimensions[chr(64 + col_idx)].width = min(max_len + 2, 48)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_workbook.save(output_path)
