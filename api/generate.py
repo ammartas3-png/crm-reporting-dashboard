@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import cgi
+import ast
 import json
 import mimetypes
 import os
@@ -193,6 +194,42 @@ def _item_value(item: dict[str, Any], candidate_keys: list[str]) -> Any:
     return ""
 
 
+def _extract_identity_values(item: dict[str, Any]) -> tuple[Any, Any]:
+    cid = _item_value(
+        item,
+        [
+            "CID",
+            "cid",
+            "Account No",
+            "AccountNo",
+            "account no",
+            "account_no",
+            "Account Number",
+            "accountnumber",
+            "Customer ID",
+            "CustomerId",
+            "customer_id",
+        ],
+    )
+    brand = _item_value(item, ["Brand", "brand", "Brand Name", "BrandName", "brand_name"])
+
+    if cid and brand:
+        return cid, brand
+
+    for key, value in item.items():
+        normalized_key = _normalize_header_key(key)
+        if not cid and (
+            "cid" in normalized_key
+            or normalized_key in {"accountno", "accountnumber", "customerid"}
+        ):
+            cid = value
+        if not brand and "brand" in normalized_key:
+            brand = value
+        if cid and brand:
+            break
+    return cid, brand
+
+
 def _extract_webhook_data_items(payload: Any) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
 
@@ -205,7 +242,11 @@ def _extract_webhook_data_items(payload: Any) -> list[dict[str, Any]]:
         try:
             return json.loads(text)
         except json.JSONDecodeError:
-            return value
+            try:
+                parsed = ast.literal_eval(text)
+            except (ValueError, SyntaxError):
+                return value
+            return parsed
 
     def walk(node: Any) -> None:
         node = parse_json_like(node)
@@ -218,8 +259,7 @@ def _extract_webhook_data_items(payload: Any) -> list[dict[str, Any]]:
         if not isinstance(node, dict):
             return
 
-        cid = _item_value(node, ["CID", "Account No", "AccountNo", "account no"])
-        brand = _item_value(node, ["Brand", "brand"])
+        cid, brand = _extract_identity_values(node)
         if _normalize_match_value(cid) and _normalize_match_value(brand):
             items.append(node)
 
@@ -247,20 +287,7 @@ def _build_database_suggestions(payload: Any) -> dict[tuple[str, str], tuple[Any
     suggestions: dict[tuple[str, str], tuple[Any, Any]] = {}
 
     for item in items:
-        cid = _item_value(
-            item,
-            [
-                "CID",
-                "cid",
-                "Account No",
-                "AccountNo",
-                "account no",
-                "account_no",
-                "Customer ID",
-                "CustomerId",
-            ],
-        )
-        brand = _item_value(item, ["Brand", "brand", "Brand Name", "BrandName"])
+        cid, brand = _extract_identity_values(item)
         cid_key = _normalize_match_value(cid)
         brand_key = _normalize_match_value(brand)
         if not cid_key or not brand_key:
@@ -273,10 +300,11 @@ def _build_database_suggestions(payload: Any) -> dict[tuple[str, str], tuple[Any
                 "Suggested Status",
                 "suggested_status",
                 "SuggestedStatus",
-                "status",
+                "RecommendationStatus",
+                "RecommendedStatus",
             ],
         )
-        reason = _item_value(item, ["Reason", "reason", "Explanation", "Comment"])
+        reason = _item_value(item, ["Reason", "reason", "Explanation", "Rationale"])
         key = (cid_key, brand_key)
 
         existing = suggestions.get(key)
