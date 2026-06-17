@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import cgi
 import ast
+import csv
 import json
 import mimetypes
 import os
@@ -230,6 +231,122 @@ def _extract_identity_values(item: dict[str, Any]) -> tuple[Any, Any]:
     return cid, brand
 
 
+def _is_identity_scalar(value: Any) -> bool:
+    return not isinstance(value, (list, tuple, dict, set))
+
+
+def _looks_like_identity_header(value: Any) -> bool:
+    normalized = _normalize_header_key(value)
+    return bool(
+        normalized
+        and (
+            "cid" in normalized
+            or normalized in {"accountno", "accountnumber", "customerid"}
+            or "brand" in normalized
+        )
+    )
+
+
+def _records_from_table_rows(rows: list[Any]) -> list[dict[str, Any]]:
+    if len(rows) < 2:
+        return []
+    if not all(isinstance(row, (list, tuple)) for row in rows):
+        return []
+
+    header_row = list(rows[0])
+    if not any(_looks_like_identity_header(cell) for cell in header_row):
+        return []
+
+    headers = [str(cell or "").strip() for cell in header_row]
+    records: list[dict[str, Any]] = []
+    for row in rows[1:]:
+        row_values = list(row)
+        if not any(value not in (None, "") for value in row_values):
+            continue
+        record = {
+            headers[index]: row_values[index] if index < len(row_values) else ""
+            for index in range(len(headers))
+            if headers[index]
+        }
+        if record:
+            records.append(record)
+    return records
+
+
+def _records_from_columnar_dict(node: dict[str, Any]) -> list[dict[str, Any]]:
+    cid_key = None
+    brand_key = None
+    for key in node.keys():
+        normalized = _normalize_header_key(key)
+        if cid_key is None and (
+            "cid" in normalized
+            or normalized in {"accountno", "accountnumber", "customerid"}
+        ):
+            cid_key = key
+        if brand_key is None and "brand" in normalized:
+            brand_key = key
+    if cid_key is None or brand_key is None:
+        return []
+
+    cid_values = node.get(cid_key)
+    brand_values = node.get(brand_key)
+    if not isinstance(cid_values, list) or not isinstance(brand_values, list):
+        return []
+
+    row_count = min(len(cid_values), len(brand_values))
+    if row_count == 0:
+        return []
+
+    records: list[dict[str, Any]] = []
+    for row_index in range(row_count):
+        record: dict[str, Any] = {}
+        for key, value in node.items():
+            if isinstance(value, list):
+                record[key] = value[row_index] if row_index < len(value) else ""
+            else:
+                record[key] = value
+        records.append(record)
+    return records
+
+
+def _record_from_text(text: str) -> dict[str, Any] | None:
+    if not isinstance(text, str):
+        return None
+    normalized = text.strip()
+    if not normalized:
+        return None
+
+    cid_match = re.search(
+        r"\b(?:cid|account\s*no|accountnumber|customer\s*id)\b\s*[:=]\s*['\"]?([A-Za-z0-9._-]+)",
+        normalized,
+        re.IGNORECASE,
+    )
+    brand_match = re.search(
+        r"\b(?:brand|brand\s*name)\b\s*[:=]\s*['\"]?([A-Za-z0-9 _.-]+)",
+        normalized,
+        re.IGNORECASE,
+    )
+    if not cid_match or not brand_match:
+        return None
+
+    suggested_match = re.search(
+        r"\b(?:suggested\s*status|recommended\s*status|recommendationstatus)\b\s*[:=]\s*['\"]?([^,\n\r;]+)",
+        normalized,
+        re.IGNORECASE,
+    )
+    reason_match = re.search(
+        r"\b(?:reason|explanation|rationale)\b\s*[:=]\s*['\"]?([^\n\r]+)",
+        normalized,
+        re.IGNORECASE,
+    )
+    return {
+        "CID": cid_match.group(1).strip(),
+        "Brand": brand_match.group(1).strip(),
+        "Suggested Status": suggested_match.group(1).strip() if suggested_match else "",
+        "Reason": reason_match.group(1).strip() if reason_match else "",
+    }
+
+
 def _extract_webhook_data_items(payload: Any) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
 
@@ -280,22 +397,48 @@ def _extract_webhook_data_items(payload: Any) -> list[dict[str, Any]]:
             if not isinstance(embedded_parsed, str):
                 return embedded_parsed
 
+        # Fallback for CSV-like blocks where first row contains headers.
+        if "\n" in text and "," in text:
+            try:
+                csv_rows = list(csv.reader(text.splitlines()))
+            except Exception:
+                csv_rows = []
+            table_records = _records_from_table_rows(csv_rows)
+            if table_records:
+                return table_records
+
         return value
 
     def walk(node: Any) -> None:
         node = parse_json_like(node)
 
         if isinstance(node, list):
+            table_records = _records_from_table_rows(node)
+            if table_records:
+                for record in table_records:
+                    walk(record)
             for entry in node:
                 walk(entry)
             return
 
         if not isinstance(node, dict):
+            if isinstance(node, str):
+                record = _record_from_text(node)
+                if record:
+                    items.append(record)
             return
 
         cid, brand = _extract_identity_values(node)
-        if _normalize_match_value(cid) and _normalize_match_value(brand):
+        if (
+            _is_identity_scalar(cid)
+            and _is_identity_scalar(brand)
+            and _normalize_match_value(cid)
+            and _normalize_match_value(brand)
+        ):
             items.append(node)
+
+        for record in _records_from_columnar_dict(node):
+            walk(record)
 
         data_payload = None
         for key, value in node.items():
@@ -322,6 +465,8 @@ def _build_database_suggestions(payload: Any) -> dict[tuple[str, str], tuple[Any
 
     for item in items:
         cid, brand = _extract_identity_values(item)
+        if not (_is_identity_scalar(cid) and _is_identity_scalar(brand)):
+            continue
         cid_key = _normalize_match_value(cid)
         brand_key = _normalize_match_value(brand)
         if not cid_key or not brand_key:
@@ -505,12 +650,14 @@ def _request_webhook_json(file_path: Path) -> Any:
     if not response_bytes:
         raise ValueError("Webhook returned an empty response.")
 
+    decoded_text = response_bytes.decode("utf-8", errors="replace")
     try:
-        payload = json.loads(response_bytes.decode("utf-8", errors="replace"))
-    except json.JSONDecodeError as exc:
-        raise ValueError(
-            "Webhook response must be JSON containing a Data array with CID and brand."
-        ) from exc
+        payload = json.loads(decoded_text)
+    except json.JSONDecodeError:
+        try:
+            payload = ast.literal_eval(decoded_text)
+        except (ValueError, SyntaxError):
+            payload = decoded_text
 
     if isinstance(payload, dict):
         error_message = payload.get("error") or payload.get("message")
