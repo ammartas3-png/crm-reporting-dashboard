@@ -459,8 +459,59 @@ def _extract_webhook_data_items(payload: Any) -> list[dict[str, Any]]:
     return items
 
 
+def _candidate_payload_nodes(payload: Any) -> list[Any]:
+    candidates: list[Any] = []
+    seen_ids: set[int] = set()
+
+    def add(node: Any) -> None:
+        if node is None:
+            return
+        node_id = id(node)
+        if node_id in seen_ids:
+            return
+        seen_ids.add(node_id)
+        candidates.append(node)
+
+    add(payload)
+
+    queue: list[Any] = [payload]
+    while queue:
+        node = queue.pop(0)
+
+        if isinstance(node, list):
+            if node:
+                add(node[0])  # Explicit File[0] / payload[0] handling.
+                queue.append(node[0])
+            continue
+
+        if not isinstance(node, dict):
+            continue
+
+        for key, value in node.items():
+            normalized_key = _normalize_header_key(key)
+            if normalized_key in {
+                "file",
+                "data",
+                "items",
+                "records",
+                "result",
+                "results",
+                "output",
+                "response",
+            }:
+                add(value)
+                queue.append(value)
+                if isinstance(value, list) and value:
+                    add(value[0])  # Explicitly support key-based list first item lookup.
+                    queue.append(value[0])
+
+    return candidates
+
+
 def _build_database_suggestions(payload: Any) -> dict[tuple[str, str], tuple[Any, Any]]:
-    items = _extract_webhook_data_items(payload)
+    items: list[dict[str, Any]] = []
+    for candidate in _candidate_payload_nodes(payload):
+        items.extend(_extract_webhook_data_items(candidate))
     suggestions: dict[tuple[str, str], tuple[Any, Any]] = {}
 
     for item in items:
@@ -540,7 +591,8 @@ def _extract_payload_error_message(payload: Any) -> str | None:
             if isinstance(value, (list, dict)):
                 walk(value)
 
-    walk(payload)
+    for candidate in _candidate_payload_nodes(payload):
+        walk(candidate)
     if not candidates:
         return None
     return "Webhook response error: " + " | ".join(dict.fromkeys(candidates))
