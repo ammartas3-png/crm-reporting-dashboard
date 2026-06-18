@@ -174,18 +174,61 @@ class ReportGeneratorTests(unittest.TestCase):
             ws_general = workbook_general["CRM Output"]
             self.assertTrue(
                 any(
-                    ws_general.cell(row=row, column=1).value == "Status Pivot"
-                    for row in range(1, ws_general.max_row + 1)
+                    cell.value == "Status Pivot"
+                    for row in ws_general.iter_rows(
+                        min_row=1,
+                        max_row=ws_general.max_row,
+                        min_col=1,
+                        max_col=ws_general.max_column,
+                    )
+                    for cell in row
                 )
             )
 
             workbook_inhouse = load_workbook(root / "My_report_M-Inhousemedia.xlsx", data_only=False)
             ws_inhouse = workbook_inhouse["CRM Output"]
+            self.assertTrue(
+                any(
+                    cell.value == "Status Pivot"
+                    for row in ws_inhouse.iter_rows(
+                        min_row=1,
+                        max_row=ws_inhouse.max_row,
+                        min_col=1,
+                        max_col=ws_inhouse.max_column,
+                    )
+                    for cell in row
+                )
+            )
             self.assertFalse(
                 any(
-                    ws_inhouse.cell(row=row, column=1).value == "Status Pivot"
-                    for row in range(1, ws_inhouse.max_row + 1)
+                    isinstance(cell.value, str)
+                    and cell.value.startswith("=")
+                    and "COUNTIFS(" in cell.value
+                    for row in ws_inhouse.iter_rows(
+                        min_row=1,
+                        max_row=ws_inhouse.max_row,
+                        min_col=1,
+                        max_col=ws_inhouse.max_column,
+                    )
+                    for cell in row
                 )
+            )
+
+            status_pivot_fill = None
+            for row in ws_inhouse.iter_rows(
+                min_row=1,
+                max_row=ws_inhouse.max_row,
+                min_col=1,
+                max_col=ws_inhouse.max_column,
+            ):
+                matching = next((cell for cell in row if cell.value == "Status Pivot"), None)
+                if matching:
+                    status_pivot_fill = matching.fill
+                    break
+            self.assertIsNotNone(status_pivot_fill)
+            self.assertTrue(
+                (status_pivot_fill.fgColor.rgb or "").endswith("BFE7EF")
+                or (status_pivot_fill.start_color.rgb or "").endswith("BFE7EF")
             )
 
     def test_missing_powerbi_columns_reports_file_name(self) -> None:

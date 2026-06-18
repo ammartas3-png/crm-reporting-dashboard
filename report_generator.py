@@ -71,6 +71,7 @@ DATE_OF_BIRTH_INPUT_CANDIDATES = [
     "DoB",
 ]
 M_INHOUSEMEDIA_CAMPAIGN_PREFIX = "m-inhousemedia"
+PIVOT_FILL_COLOR = "BFE7EF"
 
 STATUS_COLORS: dict[str, tuple[str, str]] = {
     "call again": ("FFFF00", "000000"),
@@ -458,7 +459,7 @@ def _write_pivot_status(
     name_cell = ws.cell(row=start_row, column=label_col, value=pivot_name)
     name_cell.font = Font(bold=True, name="Arial", size=11)
     name_cell.alignment = Alignment(horizontal="center", vertical="center")
-    name_cell.fill = PatternFill("solid", start_color="F4B942", fgColor="F4B942")
+    name_cell.fill = PatternFill("solid", start_color=PIVOT_FILL_COLOR, fgColor=PIVOT_FILL_COLOR)
     if n > 1:
         ws.merge_cells(
             start_row=start_row,
@@ -510,7 +511,11 @@ def _write_pivot_status(
     gt_label.alignment = Alignment(horizontal="center", vertical="center")
     gt_status.font = Font(bold=True, name="Arial")
     gt_status.alignment = Alignment(horizontal="center", vertical="center")
-    gt_status.fill = PatternFill("solid", start_color="F4B942", fgColor="F4B942")
+    gt_status.fill = PatternFill(
+        "solid",
+        start_color=PIVOT_FILL_COLOR,
+        fgColor=PIVOT_FILL_COLOR,
+    )
 
     ws.merge_cells(
         start_row=total_row,
@@ -521,7 +526,11 @@ def _write_pivot_status(
     for cell in (gt_count, gt_pct):
         cell.font = Font(bold=True, name="Arial")
         cell.alignment = Alignment(horizontal="center", vertical="center")
-        cell.fill = PatternFill("solid", start_color="F4B942", fgColor="F4B942")
+        cell.fill = PatternFill(
+            "solid",
+            start_color=PIVOT_FILL_COLOR,
+            fgColor=PIVOT_FILL_COLOR,
+        )
 
     for row_num in range(start_row, total_row + 1):
         for col_num in range(label_col, pct_col + 1):
@@ -572,7 +581,7 @@ def _write_pivot_call_attempts(
     name_cell = ws.cell(row=start_row, column=label_col, value="Call Attempts")
     name_cell.font = Font(bold=True, name="Arial", size=11)
     name_cell.alignment = Alignment(horizontal="center", vertical="center")
-    name_cell.fill = PatternFill("solid", start_color="F4B942", fgColor="F4B942")
+    name_cell.fill = PatternFill("solid", start_color=PIVOT_FILL_COLOR, fgColor=PIVOT_FILL_COLOR)
     if n > 1:
         ws.merge_cells(
             start_row=start_row,
@@ -624,7 +633,11 @@ def _write_pivot_call_attempts(
     gt_label.alignment = Alignment(horizontal="center", vertical="center")
     gt_bucket.font = Font(bold=True, name="Arial")
     gt_bucket.alignment = Alignment(horizontal="center", vertical="center")
-    gt_bucket.fill = PatternFill("solid", start_color="F4B942", fgColor="F4B942")
+    gt_bucket.fill = PatternFill(
+        "solid",
+        start_color=PIVOT_FILL_COLOR,
+        fgColor=PIVOT_FILL_COLOR,
+    )
 
     ws.merge_cells(
         start_row=total_row,
@@ -635,7 +648,11 @@ def _write_pivot_call_attempts(
     for cell in (gt_count, gt_pct):
         cell.font = Font(bold=True, name="Arial")
         cell.alignment = Alignment(horizontal="center", vertical="center")
-        cell.fill = PatternFill("solid", start_color="F4B942", fgColor="F4B942")
+        cell.fill = PatternFill(
+            "solid",
+            start_color=PIVOT_FILL_COLOR,
+            fgColor=PIVOT_FILL_COLOR,
+        )
 
     for row_num in range(start_row, total_row + 1):
         for col_num in range(label_col, pct_col + 1):
@@ -701,7 +718,11 @@ def _write_pivot_campaigns(
         header_cell = ws.cell(row=header_start, column=status_col, value=campaign)
         header_cell.font = Font(bold=True, name="Arial", size=12)
         header_cell.alignment = Alignment(horizontal="center", vertical="center")
-        header_cell.fill = PatternFill("solid", start_color="F4B942", fgColor="F4B942")
+        header_cell.fill = PatternFill(
+            "solid",
+            start_color=PIVOT_FILL_COLOR,
+            fgColor=PIVOT_FILL_COLOR,
+        )
         ws.merge_cells(
             start_row=header_start,
             start_column=status_col,
@@ -764,7 +785,11 @@ def _write_pivot_campaigns(
         gt_label = ws.cell(row=campaign_total_row, column=status_col, value="Total")
         gt_label.font = Font(bold=True, name="Arial")
         gt_label.alignment = Alignment(horizontal="center", vertical="center")
-        gt_label.fill = PatternFill("solid", start_color="F4B942", fgColor="F4B942")
+        gt_label.fill = PatternFill(
+            "solid",
+            start_color=PIVOT_FILL_COLOR,
+            fgColor=PIVOT_FILL_COLOR,
+        )
 
         gt_count = ws.cell(
             row=campaign_total_row,
@@ -781,7 +806,11 @@ def _write_pivot_campaigns(
         for cell in (gt_count, gt_pct):
             cell.font = Font(bold=True, name="Arial")
             cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.fill = PatternFill("solid", start_color="F4B942", fgColor="F4B942")
+            cell.fill = PatternFill(
+                "solid",
+                start_color=PIVOT_FILL_COLOR,
+                fgColor=PIVOT_FILL_COLOR,
+            )
 
         for row_num in range(first_count_row, campaign_total_row + 1):
             for col_num in range(status_col, pct_col + 1):
@@ -912,24 +941,17 @@ def write_output(
 
     pivot_start_row = last_data_row + 3
     current_row = pivot_start_row
-    current_col = 1
+    pivot_width = 4
+    total_columns = len(PROGRAM_A_OUTPUT_COLUMNS)
+    current_col = max(1, ((total_columns - pivot_width) // 2) + 1)
 
-    ws_data.column_dimensions["A"].width = max(
-        ws_data.column_dimensions["A"].width,
-        20,
-    )
-    ws_data.column_dimensions["B"].width = max(
-        ws_data.column_dimensions["B"].width,
-        32,
-    )
-    ws_data.column_dimensions["C"].width = max(
-        ws_data.column_dimensions["C"].width,
-        10,
-    )
-    ws_data.column_dimensions["D"].width = max(
-        ws_data.column_dimensions["D"].width,
-        10,
-    )
+    pivot_min_widths = [20, 32, 10, 10]
+    for offset, min_width in enumerate(pivot_min_widths):
+        col_letter = get_column_letter(current_col + offset)
+        ws_data.column_dimensions[col_letter].width = max(
+            ws_data.column_dimensions[col_letter].width or 0,
+            min_width,
+        )
 
     if include_status_pivot:
         current_row = _write_pivot_status(
@@ -943,15 +965,6 @@ def write_output(
         current_row += 1
 
     current_row = _write_pivot_call_attempts(
-        ws_data,
-        current_row,
-        current_col,
-        rows,
-        data_sheet_name="CRM Output",
-    )
-    current_row += 3
-
-    _write_pivot_campaigns(
         ws_data,
         current_row,
         current_col,
@@ -1014,7 +1027,7 @@ def build_output_files(
             m_inhouse_rows,
             m_inhouse_output,
             pivot_name=pivot_name,
-            include_status_pivot=False,
+            include_status_pivot=True,
         )
         return [general_output, m_inhouse_output]
 
