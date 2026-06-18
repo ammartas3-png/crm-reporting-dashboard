@@ -966,7 +966,7 @@ def write_output(
 
     pivot_start_row = last_data_row + 3
     current_row = pivot_start_row
-    current_col = 6
+    current_col = 1
 
     pivot_min_widths = [20, 32, 10, 10]
     for offset, min_width in enumerate(pivot_min_widths):

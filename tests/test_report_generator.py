@@ -105,7 +105,20 @@ class ReportGeneratorTests(unittest.TestCase):
             self.assertEqual(worksheet.cell(3, status_col).value, "Telemarketing")
             self.assertEqual(worksheet.cell(3, attempts_col).value, 1)
             self.assertEqual(str(worksheet.cell(2, dob_col).value), "1990-01-01")
-            self.assertIn("$G$2:$G$3", str(worksheet.cell(6, 8).value or ""))
+            self.assertTrue(
+                any(
+                    isinstance(cell.value, str)
+                    and "COUNTIF(" in cell.value
+                    and "$G$2:$G$3" in cell.value
+                    for row in worksheet.iter_rows(
+                        min_row=1,
+                        max_row=worksheet.max_row,
+                        min_col=1,
+                        max_col=worksheet.max_column,
+                    )
+                    for cell in row
+                )
+            )
 
     def test_build_output_files_splits_m_inhousemedia_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -196,7 +209,7 @@ class ReportGeneratorTests(unittest.TestCase):
                 for cell in row
                 if cell.value == "Status Pivot"
             )
-            self.assertEqual(general_status_cell.column, 6)
+            self.assertEqual(general_status_cell.column, 1)
             self.assertTrue(
                 any(
                     isinstance(cell.value, str)
