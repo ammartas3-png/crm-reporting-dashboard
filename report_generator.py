@@ -58,6 +58,20 @@ OUTPUT_COLUMNS = [
     "Call Attempts",
 ]
 
+DATE_OF_BIRTH_OUTPUT_COLUMN = "Date of birth"
+PROGRAM_A_OUTPUT_COLUMNS = (
+    OUTPUT_COLUMNS[: OUTPUT_COLUMNS.index("Comments")]
+    + [DATE_OF_BIRTH_OUTPUT_COLUMN]
+    + OUTPUT_COLUMNS[OUTPUT_COLUMNS.index("Comments") :]
+)
+DATE_OF_BIRTH_INPUT_CANDIDATES = [
+    "Date of Birth",
+    "Date of birth",
+    "DOB",
+    "DoB",
+]
+M_INHOUSEMEDIA_CAMPAIGN_PREFIX = "m-inhousemedia"
+
 STATUS_COLORS: dict[str, tuple[str, str]] = {
     "call again": ("FFFF00", "000000"),
     "decline": ("FF0000", "FFFFFF"),
@@ -330,6 +344,13 @@ def read_crm_rows(
         raise ValueError(f"{crm_file.name} is empty") from exc
 
     indexes = header_indexes(headers, CRM_COLUMNS, crm_file)
+    normalized_headers = {normalize_header(header): i for i, header in enumerate(headers)}
+    date_of_birth_index = None
+    for candidate in DATE_OF_BIRTH_INPUT_CANDIDATES:
+        candidate_key = normalize_header(candidate)
+        if candidate_key in normalized_headers:
+            date_of_birth_index = normalized_headers[candidate_key]
+            break
     platform_key = normalize_match_value(platform)
     output_rows: list[dict[str, Any]] = []
 
@@ -338,6 +359,7 @@ def read_crm_rows(
             continue
 
         crm_values = {column: row[indexes[column]] for column in CRM_COLUMNS}
+        date_of_birth = row[date_of_birth_index] if date_of_birth_index is not None else ""
 
         customer_type_norm = normalize_status(crm_values.get("Customer Type", ""))
         if customer_type_norm == "depositor":
@@ -347,6 +369,7 @@ def read_crm_rows(
                     "Platform": platform,
                     **crm_values,
                     "CB": None,
+                    DATE_OF_BIRTH_OUTPUT_COLUMN: date_of_birth,
                     "Comments": "",
                     "_comments_yellow": False,
                     "Call Attempts": 1,
@@ -377,6 +400,7 @@ def read_crm_rows(
                 "Platform": platform,
                 **crm_values,
                 "CB": cb_value,
+                DATE_OF_BIRTH_OUTPUT_COLUMN: date_of_birth,
                 "Comments": comment_text,
                 "_comments_yellow": use_yellow,
                 "Call Attempts": call_attempts,
@@ -416,11 +440,11 @@ def _write_pivot_status(
     pct_col = start_col + 3
 
     ref_sheet = main_sheet_name if (filter_country and main_sheet_name) else data_sheet_name
-    status_letter = get_column_letter(OUTPUT_COLUMNS.index("Status") + 1)
+    status_letter = get_column_letter(PROGRAM_A_OUTPUT_COLUMNS.index("Status") + 1)
     status_range = f"'{ref_sheet}'!{status_letter}:{status_letter}"
 
     if filter_country and main_sheet_name:
-        country_letter = get_column_letter(OUTPUT_COLUMNS.index("Country") + 1)
+        country_letter = get_column_letter(PROGRAM_A_OUTPUT_COLUMNS.index("Country") + 1)
         country_range = f"'{main_sheet_name}'!{country_letter}:{country_letter}"
         safe_country = filter_country.replace('"', '""')
 
@@ -530,11 +554,11 @@ def _write_pivot_call_attempts(
     pct_col = start_col + 3
 
     ref_sheet = main_sheet_name if (filter_country and main_sheet_name) else data_sheet_name
-    ca_letter = get_column_letter(OUTPUT_COLUMNS.index("Call Attempts") + 1)
+    ca_letter = get_column_letter(PROGRAM_A_OUTPUT_COLUMNS.index("Call Attempts") + 1)
     ca_range = f"'{ref_sheet}'!{ca_letter}:{ca_letter}"
 
     if filter_country and main_sheet_name:
-        country_letter = get_column_letter(OUTPUT_COLUMNS.index("Country") + 1)
+        country_letter = get_column_letter(PROGRAM_A_OUTPUT_COLUMNS.index("Country") + 1)
         country_range = f"'{main_sheet_name}'!{country_letter}:{country_letter}"
         safe_country = filter_country.replace('"', '""')
 
@@ -652,14 +676,14 @@ def _write_pivot_campaigns(
     pct_col = start_col + 2
 
     ref_sheet = main_sheet_name if (filter_country and main_sheet_name) else data_sheet_name
-    status_letter = get_column_letter(OUTPUT_COLUMNS.index("Status") + 1)
-    campaign_letter = get_column_letter(OUTPUT_COLUMNS.index("Campaign") + 1)
+    status_letter = get_column_letter(PROGRAM_A_OUTPUT_COLUMNS.index("Status") + 1)
+    campaign_letter = get_column_letter(PROGRAM_A_OUTPUT_COLUMNS.index("Campaign") + 1)
     status_range = f"'{ref_sheet}'!{status_letter}:{status_letter}"
     campaign_range = f"'{ref_sheet}'!{campaign_letter}:{campaign_letter}"
     count_col_letter = get_column_letter(count_col)
 
     if filter_country and main_sheet_name:
-        country_letter = get_column_letter(OUTPUT_COLUMNS.index("Country") + 1)
+        country_letter = get_column_letter(PROGRAM_A_OUTPUT_COLUMNS.index("Country") + 1)
         country_range = f"'{ref_sheet}'!{country_letter}:{country_letter}"
         safe_country = filter_country.replace('"', '""')
 
@@ -806,24 +830,25 @@ def write_output(
     rows: list[dict[str, Any]],
     output_file: Path,
     pivot_name: str,
+    include_status_pivot: bool = True,
 ) -> None:
     workbook = Workbook()
     ws_data = workbook.active
     ws_data.title = "CRM Output"
 
-    status_col_idx = OUTPUT_COLUMNS.index("Status") + 1
-    cb_col_idx = OUTPUT_COLUMNS.index("CB") + 1
-    comments_col_idx = OUTPUT_COLUMNS.index("Comments") + 1
+    status_col_idx = PROGRAM_A_OUTPUT_COLUMNS.index("Status") + 1
+    cb_col_idx = PROGRAM_A_OUTPUT_COLUMNS.index("CB") + 1
+    comments_col_idx = PROGRAM_A_OUTPUT_COLUMNS.index("Comments") + 1
 
-    ws_data.append(OUTPUT_COLUMNS)
+    ws_data.append(PROGRAM_A_OUTPUT_COLUMNS)
     for cell in ws_data[1]:
         cell.font = Font(bold=True, name="Arial")
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
     for row in rows:
-        data = [row.get(column, "") for column in OUTPUT_COLUMNS]
+        data = [row.get(column, "") for column in PROGRAM_A_OUTPUT_COLUMNS]
 
-        cb_index = OUTPUT_COLUMNS.index("CB")
+        cb_index = PROGRAM_A_OUTPUT_COLUMNS.index("CB")
         if data[cb_index] is None:
             data[cb_index] = ""
 
@@ -854,7 +879,7 @@ def write_output(
         if row.get("_comments_yellow"):
             comments_cell.fill = _make_fill("FFFF00")
 
-        for col_idx in range(1, len(OUTPUT_COLUMNS) + 1):
+        for col_idx in range(1, len(PROGRAM_A_OUTPUT_COLUMNS) + 1):
             cell = ws_data.cell(row=excel_row, column=col_idx)
             if col_idx != comments_col_idx:
                 cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -865,9 +890,9 @@ def write_output(
             )
             cell.font = Font(name="Arial", color=rgb, bold=cell.font.bold)
 
-    _apply_all_borders(ws_data, ws_data.max_row, len(OUTPUT_COLUMNS))
+    _apply_all_borders(ws_data, ws_data.max_row, len(PROGRAM_A_OUTPUT_COLUMNS))
 
-    last_col_letter = get_column_letter(len(OUTPUT_COLUMNS))
+    last_col_letter = get_column_letter(len(PROGRAM_A_OUTPUT_COLUMNS))
     last_data_row = ws_data.max_row
     table = Table(displayName="CRMOutput", ref=f"A1:{last_col_letter}{last_data_row}")
     table.tableStyleInfo = TableStyleInfo(
@@ -906,15 +931,16 @@ def write_output(
         10,
     )
 
-    current_row = _write_pivot_status(
-        ws_data,
-        current_row,
-        current_col,
-        pivot_name,
-        rows,
-        data_sheet_name="CRM Output",
-    )
-    current_row += 1
+    if include_status_pivot:
+        current_row = _write_pivot_status(
+            ws_data,
+            current_row,
+            current_col,
+            pivot_name,
+            rows,
+            data_sheet_name="CRM Output",
+        )
+        current_row += 1
 
     current_row = _write_pivot_call_attempts(
         ws_data,
@@ -937,7 +963,25 @@ def write_output(
     workbook.save(output_file)
 
 
-def build_output(
+def _is_m_inhousemedia_campaign(campaign_value: Any) -> bool:
+    campaign = normalize_status(campaign_value)
+    return campaign.startswith(M_INHOUSEMEDIA_CAMPAIGN_PREFIX)
+
+
+def _split_rows_by_campaign(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    general_rows: list[dict[str, Any]] = []
+    m_inhouse_rows: list[dict[str, Any]] = []
+    for row in rows:
+        if _is_m_inhousemedia_campaign(row.get("Campaign", "")):
+            m_inhouse_rows.append(row)
+        else:
+            general_rows.append(row)
+    return general_rows, m_inhouse_rows
+
+
+def build_output_files(
     powerbi_report: Path,
     crm_files: list[Path],
     platforms: list[str],
@@ -945,7 +989,7 @@ def build_output(
     output_file: Path,
     powerbi_sheet: str | None = None,
     crm_sheet: str | None = None,
-) -> None:
+) -> list[Path]:
     if len(crm_files) != len(platforms):
         raise ValueError("Each CRM file must have exactly one platform name.")
 
@@ -956,10 +1000,46 @@ def build_output(
         file_rows = read_crm_rows(crm_file, platform, powerbi_lookup, crm_sheet)
         all_rows.extend(file_rows)
 
-    # Program A output must be sorted alphabetically by Status (A -> Z).
     all_rows.sort(key=lambda row: normalize_status(row.get("Status", "")))
+    general_rows, m_inhouse_rows = _split_rows_by_campaign(all_rows)
 
-    write_output(all_rows, output_file, pivot_name=pivot_name)
+    if m_inhouse_rows:
+        suffix = output_file.suffix or ".xlsx"
+        general_output = output_file.with_name(f"{output_file.stem}_general{suffix}")
+        m_inhouse_output = output_file.with_name(
+            f"{output_file.stem}_M-Inhousemedia{suffix}"
+        )
+        write_output(general_rows, general_output, pivot_name=pivot_name, include_status_pivot=True)
+        write_output(
+            m_inhouse_rows,
+            m_inhouse_output,
+            pivot_name=pivot_name,
+            include_status_pivot=False,
+        )
+        return [general_output, m_inhouse_output]
+
+    write_output(all_rows, output_file, pivot_name=pivot_name, include_status_pivot=True)
+    return [output_file]
+
+
+def build_output(
+    powerbi_report: Path,
+    crm_files: list[Path],
+    platforms: list[str],
+    pivot_name: str,
+    output_file: Path,
+    powerbi_sheet: str | None = None,
+    crm_sheet: str | None = None,
+) -> None:
+    build_output_files(
+        powerbi_report=powerbi_report,
+        crm_files=crm_files,
+        platforms=platforms,
+        pivot_name=pivot_name,
+        output_file=output_file,
+        powerbi_sheet=powerbi_sheet,
+        crm_sheet=crm_sheet,
+    )
 
 
 def prompt(message: str, allow_empty: bool = False) -> str:

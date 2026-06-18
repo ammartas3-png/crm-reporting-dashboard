@@ -11,6 +11,8 @@ from report_generator import (
     CRM_COLUMNS,
     OUTPUT_COLUMNS,
     POWERBI_COLUMNS,
+    PROGRAM_A_OUTPUT_COLUMNS,
+    build_output_files,
     build_output,
     read_powerbi_lookup,
 )
@@ -47,7 +49,7 @@ class ReportGeneratorTests(unittest.TestCase):
             )
             _write_workbook(
                 crm,
-                CRM_COLUMNS,
+                [*CRM_COLUMNS, "Date of Birth"],
                 [
                     [
                         "Lead",
@@ -61,6 +63,7 @@ class ReportGeneratorTests(unittest.TestCase):
                         "Sub A",
                         "Placement A",
                         "Agent 1",
+                        "1990-01-01",
                     ],
                     [
                         "Depositor",
@@ -74,6 +77,7 @@ class ReportGeneratorTests(unittest.TestCase):
                         "Sub B",
                         "Placement B",
                         "Agent 2",
+                        "1988-10-10",
                     ],
                 ],
             )
@@ -89,16 +93,100 @@ class ReportGeneratorTests(unittest.TestCase):
             workbook = load_workbook(output, data_only=False)
             worksheet = workbook["CRM Output"]
             headers = [cell.value for cell in worksheet[1]]
-            self.assertEqual(headers, OUTPUT_COLUMNS)
+            self.assertEqual(headers, PROGRAM_A_OUTPUT_COLUMNS)
 
-            comments_col = OUTPUT_COLUMNS.index("Comments") + 1
-            attempts_col = OUTPUT_COLUMNS.index("Call Attempts") + 1
-            status_col = OUTPUT_COLUMNS.index("Status") + 1
+            comments_col = PROGRAM_A_OUTPUT_COLUMNS.index("Comments") + 1
+            attempts_col = PROGRAM_A_OUTPUT_COLUMNS.index("Call Attempts") + 1
+            status_col = PROGRAM_A_OUTPUT_COLUMNS.index("Status") + 1
+            dob_col = PROGRAM_A_OUTPUT_COLUMNS.index("Date of birth") + 1
 
             self.assertEqual(worksheet.cell(2, comments_col).value, "NA VM x2 // called client")
             self.assertEqual(worksheet.cell(2, attempts_col).value, 3)
             self.assertEqual(worksheet.cell(3, status_col).value, "Telemarketing")
             self.assertEqual(worksheet.cell(3, attempts_col).value, 1)
+            self.assertEqual(str(worksheet.cell(2, dob_col).value), "1990-01-01")
+
+    def test_build_output_files_splits_m_inhousemedia_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            powerbi = root / "powerbi.xlsx"
+            crm = root / "crm.xlsx"
+            output = root / "My_report.xlsx"
+
+            _write_workbook(
+                powerbi,
+                POWERBI_COLUMNS,
+                [
+                    [111, "BrandA", "| first ;", 1],
+                    [222, "BrandA", "| second ;", 2],
+                ],
+            )
+            _write_workbook(
+                crm,
+                [*CRM_COLUMNS, "Date of Birth"],
+                [
+                    [
+                        "Lead",
+                        111,
+                        "2026-05-09",
+                        "Jane Doe",
+                        "Sales",
+                        "Potential",
+                        "TR",
+                        "Campaign A",
+                        "Sub A",
+                        "Placement A",
+                        "Agent 1",
+                        "1990-01-01",
+                    ],
+                    [
+                        "Lead",
+                        222,
+                        "2026-05-09",
+                        "John Doe",
+                        "Sales",
+                        "Call Again",
+                        "TR",
+                        "M-Inhousemedia Alpha",
+                        "Sub B",
+                        "Placement B",
+                        "Agent 2",
+                        "1989-09-09",
+                    ],
+                ],
+            )
+
+            outputs = build_output_files(
+                powerbi_report=powerbi,
+                crm_files=[crm],
+                platforms=["BrandA"],
+                pivot_name="Status Pivot",
+                output_file=output,
+            )
+
+            output_names = sorted(path.name for path in outputs)
+            self.assertEqual(
+                output_names,
+                ["My_report_M-Inhousemedia.xlsx", "My_report_general.xlsx"],
+            )
+
+            workbook_general = load_workbook(root / "My_report_general.xlsx", data_only=False)
+            ws_general = workbook_general["CRM Output"]
+            self.assertTrue(
+                any(
+                    ws_general.cell(row=row, column=1).value == "Status Pivot"
+                    for row in range(1, ws_general.max_row + 1)
+                )
+            )
+
+            workbook_inhouse = load_workbook(root / "My_report_M-Inhousemedia.xlsx", data_only=False)
+            ws_inhouse = workbook_inhouse["CRM Output"]
+            self.assertFalse(
+                any(
+                    ws_inhouse.cell(row=row, column=1).value == "Status Pivot"
+                    for row in range(1, ws_inhouse.max_row + 1)
+                )
+            )
 
     def test_missing_powerbi_columns_reports_file_name(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

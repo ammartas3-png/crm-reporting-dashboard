@@ -7,9 +7,9 @@ changing the existing implementation.
 
 from __future__ import annotations
 
-from report_generator import build_output, main
+from report_generator import build_output, build_output_files, main
 
-__all__ = ["build_output", "main"]
+__all__ = ["build_output", "build_output_files", "main"]
 
 
 if __name__ == "__main__":

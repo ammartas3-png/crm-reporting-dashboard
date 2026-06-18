@@ -15,6 +15,7 @@ import tempfile
 import urllib.error
 import urllib.request
 import uuid
+import zipfile
 from email.message import Message
 from http.server import BaseHTTPRequestHandler
 from io import BytesIO
@@ -168,6 +169,14 @@ def _save_upload(
 
 def _has_upload(field: cgi.FieldStorage | None) -> bool:
     return bool(field is not None and field.filename)
+
+
+def _zip_files(file_paths: list[Path]) -> bytes:
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for file_path in file_paths:
+            archive.write(file_path, arcname=file_path.name)
+    return buffer.getvalue()
 
 
 def _get_google_private_key() -> str:
@@ -1137,13 +1146,22 @@ class handler(BaseHTTPRequestHandler):
                     }
                     if program == PROGRAM_B:
                         program_b_country_report.build_output(**common_args)
+                        response_bytes = output_path.read_bytes()
+                        response_content_type = XLSX_CONTENT_TYPE
                     else:
-                        program_a_report.build_output(
+                        generated_outputs = program_a_report.build_output_files(
                             **common_args,
                             pivot_name=pivot_name,
                         )
-                    response_bytes = output_path.read_bytes()
-                    response_content_type = XLSX_CONTENT_TYPE
+                        if len(generated_outputs) == 1:
+                            only_output = generated_outputs[0]
+                            response_filename = only_output.name
+                            response_bytes = only_output.read_bytes()
+                            response_content_type = XLSX_CONTENT_TYPE
+                        else:
+                            response_filename = f"{output_path.stem}_reports.zip"
+                            response_bytes = _zip_files(generated_outputs)
+                            response_content_type = "application/zip"
                 elif app == APP_LEAD_SPLITTER:
                     lead_input = _save_upload(
                         _field(form, "lead_input"),
