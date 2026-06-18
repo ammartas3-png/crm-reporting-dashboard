@@ -860,6 +860,7 @@ def write_output(
     output_file: Path,
     pivot_name: str,
     include_status_pivot: bool = True,
+    include_campaign_pivot: bool = True,
 ) -> None:
     workbook = Workbook()
     ws_data = workbook.active
@@ -972,6 +973,16 @@ def write_output(
         data_sheet_name="CRM Output",
     )
 
+    if include_campaign_pivot:
+        current_row += 3
+        _write_pivot_campaigns(
+            ws_data,
+            current_row,
+            current_col,
+            rows,
+            data_sheet_name="CRM Output",
+        )
+
     output_file.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output_file)
 
@@ -1028,10 +1039,17 @@ def build_output_files(
             m_inhouse_output,
             pivot_name=pivot_name,
             include_status_pivot=True,
+            include_campaign_pivot=False,
         )
         return [general_output, m_inhouse_output]
 
-    write_output(all_rows, output_file, pivot_name=pivot_name, include_status_pivot=True)
+    write_output(
+        all_rows,
+        output_file,
+        pivot_name=pivot_name,
+        include_status_pivot=True,
+        include_campaign_pivot=True,
+    )
     return [output_file]
 
 

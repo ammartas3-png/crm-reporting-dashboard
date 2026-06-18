@@ -184,6 +184,20 @@ class ReportGeneratorTests(unittest.TestCase):
                     for cell in row
                 )
             )
+            self.assertTrue(
+                any(
+                    isinstance(cell.value, str)
+                    and cell.value.startswith("=")
+                    and "COUNTIFS(" in cell.value
+                    for row in ws_general.iter_rows(
+                        min_row=1,
+                        max_row=ws_general.max_row,
+                        min_col=1,
+                        max_col=ws_general.max_column,
+                    )
+                    for cell in row
+                )
+            )
 
             workbook_inhouse = load_workbook(root / "My_report_M-Inhousemedia.xlsx", data_only=False)
             ws_inhouse = workbook_inhouse["CRM Output"]
