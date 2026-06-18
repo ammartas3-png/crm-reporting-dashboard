@@ -85,12 +85,14 @@ DATABASE_CHECK_WEBHOOK_COLUMNS = [
     "Account No",
     "Last 10 Comments",
     "Customer Status",
+    "Country",
 ]
 DATABASE_CHECK_WEBHOOK_KEY_BY_COLUMN = {
     "Brand": "brand",
     "Account No": "account no",
     "Last 10 Comments": "last 10 comments",
     "Customer Status": "customer status",
+    "Country": "country",
 }
 _DATABASE_CHECK_LOG_SHEET_CACHE: str | None = None
 
