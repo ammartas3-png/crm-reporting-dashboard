@@ -48,6 +48,10 @@ DATABASE_CHECK_WEBHOOK_URL = os.environ.get(
     "DATABASE_CHECK_WEBHOOK_URL",
     "https://ammartd20.app.n8n.cloud/webhook-test/Database-check",
 ).strip()
+DATABASE_CHECK_CALLBACK_PATH = (
+    os.environ.get("DATABASE_CHECK_CALLBACK_PATH", "/api/n8n-callback").strip() or "/api/n8n-callback"
+)
+DATABASE_CHECK_CALLBACK_URL = os.environ.get("DATABASE_CHECK_CALLBACK_URL", "").strip()
 DATABASE_CHECK_TIMEOUT_SECONDS_RAW = os.environ.get(
     "DATABASE_CHECK_TIMEOUT_SECONDS",
     "0",
@@ -352,14 +356,35 @@ def _encode_multipart_bytes(
     file_bytes: bytes,
     mime_type: str,
     field_name: str = "file",
+    text_fields: dict[str, str] | None = None,
 ) -> tuple[bytes, str]:
     boundary = f"----CursorBoundary{uuid.uuid4().hex}"
     safe_name = _safe_filename(filename, "upload.bin")
-    body = (
-        f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="{field_name}"; filename="{safe_name}"\r\n'
-        f"Content-Type: {mime_type}\r\n\r\n"
-    ).encode("utf-8") + file_bytes + f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+    body_chunks: list[bytes] = []
+    for key, value in (text_fields or {}).items():
+        field_name_safe = str(key).strip()
+        if not field_name_safe:
+            continue
+        body_chunks.append(
+            (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="{field_name_safe}"\r\n\r\n'
+                f"{value}\r\n"
+            ).encode("utf-8")
+        )
+
+    body_chunks.append(
+        (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="{field_name}"; filename="{safe_name}"\r\n'
+            f"Content-Type: {mime_type}\r\n\r\n"
+        ).encode("utf-8")
+        + file_bytes
+        + b"\r\n"
+    )
+    body_chunks.append(f"--{boundary}--\r\n".encode("utf-8"))
+    body = b"".join(body_chunks)
 
     return body, f"multipart/form-data; boundary={boundary}"
 
@@ -928,15 +953,44 @@ def _build_database_check_webhook_records(input_path: Path) -> list[dict[str, An
     return records
 
 
-def _build_database_check_webhook_upload(input_path: Path) -> tuple[bytes, str]:
+def _build_database_check_webhook_upload(
+    input_path: Path,
+    callback_url: str = "",
+) -> tuple[bytes, str]:
     records = _build_database_check_webhook_records(input_path)
     payload_bytes = json.dumps({"data": records}, ensure_ascii=False).encode("utf-8")
+    text_fields: dict[str, str] = {}
+    if callback_url:
+        text_fields = {
+            "callback_url": callback_url,
+            "callbackUrl": callback_url,
+        }
     return _encode_multipart_bytes(
         filename=f"{input_path.stem}_database_check_payload.json",
         file_bytes=payload_bytes,
         mime_type="application/json",
         field_name="file",
+        text_fields=text_fields,
     )
+
+
+def _callback_url_for_request(handler: BaseHTTPRequestHandler) -> str:
+    if DATABASE_CHECK_CALLBACK_URL:
+        return DATABASE_CHECK_CALLBACK_URL
+
+    host = (
+        handler.headers.get("x-forwarded-host")
+        or handler.headers.get("host")
+        or ""
+    ).strip()
+    if not host:
+        return ""
+
+    proto = (handler.headers.get("x-forwarded-proto") or "https").strip() or "https"
+    path = DATABASE_CHECK_CALLBACK_PATH
+    if not path.startswith("/"):
+        path = "/" + path
+    return f"{proto}://{host}{path}"
 
 
 def _database_check_timeout_seconds() -> float | None:
@@ -951,11 +1005,14 @@ def _database_check_timeout_seconds() -> float | None:
     return timeout_seconds
 
 
-def _request_webhook_json(file_path: Path) -> Any:
+def _request_webhook_json(file_path: Path, callback_url: str = "") -> Any:
     if not DATABASE_CHECK_WEBHOOK_URL:
         raise ValueError("Database-check webhook URL is not configured.")
 
-    body, content_type = _build_database_check_webhook_upload(file_path)
+    body, content_type = _build_database_check_webhook_upload(
+        file_path,
+        callback_url=callback_url,
+    )
     request = urllib.request.Request(
         DATABASE_CHECK_WEBHOOK_URL,
         data=body,
@@ -1193,7 +1250,11 @@ class handler(BaseHTTPRequestHandler):
                         tmp_path,
                         "Database check input file",
                     )
-                    webhook_payload = _request_webhook_json(database_input)
+                    callback_url = _callback_url_for_request(self)
+                    webhook_payload = _request_webhook_json(
+                        database_input,
+                        callback_url=callback_url,
+                    )
                     response_filename = f"database_check_{database_input.stem}.xlsx"
                     database_output = tmp_path / response_filename
                     _build_database_check_output(
