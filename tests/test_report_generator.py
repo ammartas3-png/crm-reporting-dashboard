@@ -105,6 +105,7 @@ class ReportGeneratorTests(unittest.TestCase):
             self.assertEqual(worksheet.cell(3, status_col).value, "Telemarketing")
             self.assertEqual(worksheet.cell(3, attempts_col).value, 1)
             self.assertEqual(str(worksheet.cell(2, dob_col).value), "1990-01-01")
+            self.assertIn("$G$2:$G$3", str(worksheet.cell(6, 8).value or ""))
 
     def test_build_output_files_splits_m_inhousemedia_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -184,6 +185,18 @@ class ReportGeneratorTests(unittest.TestCase):
                     for cell in row
                 )
             )
+            general_status_cell = next(
+                cell
+                for row in ws_general.iter_rows(
+                    min_row=1,
+                    max_row=ws_general.max_row,
+                    min_col=1,
+                    max_col=ws_general.max_column,
+                )
+                for cell in row
+                if cell.value == "Status Pivot"
+            )
+            self.assertEqual(general_status_cell.column, 6)
             self.assertTrue(
                 any(
                     isinstance(cell.value, str)
@@ -241,8 +254,8 @@ class ReportGeneratorTests(unittest.TestCase):
                     break
             self.assertIsNotNone(status_pivot_fill)
             self.assertTrue(
-                (status_pivot_fill.fgColor.rgb or "").endswith("BFE7EF")
-                or (status_pivot_fill.start_color.rgb or "").endswith("BFE7EF")
+                (status_pivot_fill.fgColor.rgb or "").endswith("FFDBB7")
+                or (status_pivot_fill.start_color.rgb or "").endswith("FFDBB7")
             )
 
     def test_missing_powerbi_columns_reports_file_name(self) -> None:

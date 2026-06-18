@@ -71,7 +71,7 @@ DATE_OF_BIRTH_INPUT_CANDIDATES = [
     "DoB",
 ]
 M_INHOUSEMEDIA_CAMPAIGN_PREFIX = "m-inhousemedia"
-PIVOT_FILL_COLOR = "BFE7EF"
+PIVOT_FILL_COLOR = "FFDBB7"
 
 STATUS_COLORS: dict[str, tuple[str, str]] = {
     "call again": ("FFFF00", "000000"),
@@ -433,6 +433,8 @@ def _write_pivot_status(
     data_sheet_name: str = "CRM Output",
     filter_country: str | None = None,
     main_sheet_name: str | None = None,
+    data_first_row: int = 2,
+    data_last_row: int | None = None,
 ) -> int:
     del rows
     label_col = start_col
@@ -442,11 +444,16 @@ def _write_pivot_status(
 
     ref_sheet = main_sheet_name if (filter_country and main_sheet_name) else data_sheet_name
     status_letter = get_column_letter(PROGRAM_A_OUTPUT_COLUMNS.index("Status") + 1)
-    status_range = f"'{ref_sheet}'!{status_letter}:{status_letter}"
+    if data_last_row is None or data_last_row < data_first_row:
+        data_last_row = data_first_row
+    status_range = f"'{ref_sheet}'!${status_letter}${data_first_row}:${status_letter}${data_last_row}"
 
     if filter_country and main_sheet_name:
         country_letter = get_column_letter(PROGRAM_A_OUTPUT_COLUMNS.index("Country") + 1)
-        country_range = f"'{main_sheet_name}'!{country_letter}:{country_letter}"
+        country_range = (
+            f"'{main_sheet_name}'!${country_letter}${data_first_row}:"
+            f"${country_letter}${data_last_row}"
+        )
         safe_country = filter_country.replace('"', '""')
 
     n = len(STATUS_LIST)
@@ -553,6 +560,8 @@ def _write_pivot_call_attempts(
     data_sheet_name: str = "CRM Output",
     filter_country: str | None = None,
     main_sheet_name: str | None = None,
+    data_first_row: int = 2,
+    data_last_row: int | None = None,
 ) -> int:
     del rows
     bucket_order = ["1", "2", "3", "4", "5+"]
@@ -564,11 +573,16 @@ def _write_pivot_call_attempts(
 
     ref_sheet = main_sheet_name if (filter_country and main_sheet_name) else data_sheet_name
     ca_letter = get_column_letter(PROGRAM_A_OUTPUT_COLUMNS.index("Call Attempts") + 1)
-    ca_range = f"'{ref_sheet}'!{ca_letter}:{ca_letter}"
+    if data_last_row is None or data_last_row < data_first_row:
+        data_last_row = data_first_row
+    ca_range = f"'{ref_sheet}'!${ca_letter}${data_first_row}:${ca_letter}${data_last_row}"
 
     if filter_country and main_sheet_name:
         country_letter = get_column_letter(PROGRAM_A_OUTPUT_COLUMNS.index("Country") + 1)
-        country_range = f"'{main_sheet_name}'!{country_letter}:{country_letter}"
+        country_range = (
+            f"'{main_sheet_name}'!${country_letter}${data_first_row}:"
+            f"${country_letter}${data_last_row}"
+        )
         safe_country = filter_country.replace('"', '""')
 
     count_col_letter = get_column_letter(count_col)
@@ -675,6 +689,8 @@ def _write_pivot_campaigns(
     data_sheet_name: str = "CRM Output",
     filter_country: str | None = None,
     main_sheet_name: str | None = None,
+    data_first_row: int = 2,
+    data_last_row: int | None = None,
 ) -> int:
     campaign_data: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for row in rows:
@@ -695,13 +711,21 @@ def _write_pivot_campaigns(
     ref_sheet = main_sheet_name if (filter_country and main_sheet_name) else data_sheet_name
     status_letter = get_column_letter(PROGRAM_A_OUTPUT_COLUMNS.index("Status") + 1)
     campaign_letter = get_column_letter(PROGRAM_A_OUTPUT_COLUMNS.index("Campaign") + 1)
-    status_range = f"'{ref_sheet}'!{status_letter}:{status_letter}"
-    campaign_range = f"'{ref_sheet}'!{campaign_letter}:{campaign_letter}"
+    if data_last_row is None or data_last_row < data_first_row:
+        data_last_row = data_first_row
+    status_range = (
+        f"'{ref_sheet}'!${status_letter}${data_first_row}:${status_letter}${data_last_row}"
+    )
+    campaign_range = (
+        f"'{ref_sheet}'!${campaign_letter}${data_first_row}:${campaign_letter}${data_last_row}"
+    )
     count_col_letter = get_column_letter(count_col)
 
     if filter_country and main_sheet_name:
         country_letter = get_column_letter(PROGRAM_A_OUTPUT_COLUMNS.index("Country") + 1)
-        country_range = f"'{ref_sheet}'!{country_letter}:{country_letter}"
+        country_range = (
+            f"'{ref_sheet}'!${country_letter}${data_first_row}:${country_letter}${data_last_row}"
+        )
         safe_country = filter_country.replace('"', '""')
 
     n = len(STATUS_LIST)
@@ -942,9 +966,7 @@ def write_output(
 
     pivot_start_row = last_data_row + 3
     current_row = pivot_start_row
-    pivot_width = 4
-    total_columns = len(PROGRAM_A_OUTPUT_COLUMNS)
-    current_col = max(1, ((total_columns - pivot_width) // 2) + 1)
+    current_col = 6
 
     pivot_min_widths = [20, 32, 10, 10]
     for offset, min_width in enumerate(pivot_min_widths):
@@ -962,6 +984,8 @@ def write_output(
             pivot_name,
             rows,
             data_sheet_name="CRM Output",
+            data_first_row=2,
+            data_last_row=last_data_row,
         )
         current_row += 1
 
@@ -971,6 +995,8 @@ def write_output(
         current_col,
         rows,
         data_sheet_name="CRM Output",
+        data_first_row=2,
+        data_last_row=last_data_row,
     )
 
     if include_campaign_pivot:
@@ -981,6 +1007,8 @@ def write_output(
             current_col,
             rows,
             data_sheet_name="CRM Output",
+            data_first_row=2,
+            data_last_row=last_data_row,
         )
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
