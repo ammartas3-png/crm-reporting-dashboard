@@ -190,7 +190,14 @@ DATABASE_CHECK_NON_ACTION_COMMENTS = {
     "ringing no answer;",
     "pu intro hu",
     "na fvm",
-    "call again",
+    "busy line",
+    "direct busy",
+    "call failed",
+    "network error",
+    "unable to accept calls",
+    "unable to receive calls",
+    "fw to vm",
+    "silent beeping",
     "email riverquode - missed call was sent by hamza has",
     "email riverquode - missed call was sent by khaled qa",
     "email riverquode - missed call was sent by taylan bo",
@@ -205,6 +212,18 @@ _DATABASE_CHECK_NON_ACTION_COMMENTS_NORMALIZED = {
     re.sub(r"[^a-z0-9]+", " ", item.strip().casefold()).strip()
     for item in DATABASE_CHECK_NON_ACTION_COMMENTS
 }
+_DATABASE_CHECK_NON_ACTION_PATTERNS = [
+    re.compile(r"\b(?:na|navm|nadb|nvm|vm|dvm|rej|db|hu|puhu|pu hu)\b"),
+    re.compile(r"\bbusy(?: line)?\b|\bdirect busy\b|\bdbusy\b"),
+    re.compile(r"\bringing(?: na| no answer| but not answering| but rejecting)?\b"),
+    re.compile(r"\b(?:switched off|sw off|call failed|network error)\b"),
+    re.compile(r"\bunable to (?:accept|receive) calls\b"),
+    re.compile(r"\b(?:fw to vm|voice ?mail|voicemail)\b"),
+    re.compile(r"\bno answer(?: \d+| 5 up| vm| beep)?\b|\bno ans\b"),
+    re.compile(r"\b(?:silent beeping|beeping|beeps|beep)\b"),
+    re.compile(r"\b(?:on call|not reachable|not available|not ringing)\b"),
+    re.compile(r"\bin progress\b"),
+]
 
 
 def _read_static_file(filename: str) -> bytes:
@@ -606,6 +625,8 @@ def _is_non_action_comment(entry: str) -> bool:
     if not normalized:
         return True
     if normalized in _DATABASE_CHECK_NON_ACTION_COMMENTS_NORMALIZED:
+        return True
+    if any(pattern.search(normalized) for pattern in _DATABASE_CHECK_NON_ACTION_PATTERNS):
         return True
     if re.fullmatch(r"no answer(?: \d+)?", normalized):
         return True

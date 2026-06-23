@@ -91,6 +91,34 @@ class DatabaseWebhookPayloadTests(unittest.TestCase):
                     "Lead",
                     "TR",
                     "Luca Na",
+                    "2026-06-22 21:18 | Luca Na | fw to vm;",
+                ]
+            ]
+            _write_workbook(input_path, headers, rows)
+
+            with self.assertRaisesRegex(ValueError, "No usable rows were found"):
+                generate._build_database_check_webhook_records(input_path)
+
+    def test_build_webhook_records_ignores_escaped_newline_na_vm_block(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = Path(temp_dir) / "database_input.xlsx"
+            headers = [
+                "Brand",
+                "Account No",
+                "Client Name",
+                "Customer Status",
+                "Country",
+                "Current Assigned Agent",
+                "Last 10 Comments",
+            ]
+            rows = [
+                [
+                    "BrandA",
+                    1001,
+                    "Client A",
+                    "Lead",
+                    "TR",
+                    "Luca Na",
                     (
                         "2026-06-22 22:50 - navm;\\n"
                         "2026-06-21 20:17 - na;\\n"
