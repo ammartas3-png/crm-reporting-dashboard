@@ -551,7 +551,23 @@ def _split_comment_entries(value: Any) -> list[str]:
     text = str(value or "").strip()
     if not text:
         return []
-    return [line.strip() for line in re.split(r"[\r\n]+", text) if line.strip()]
+
+    # Some exports store escaped newlines as literal "\n" sequences.
+    text = (
+        text.replace("\\r\\n", "\n")
+        .replace("\\n", "\n")
+        .replace("\\r", "\n")
+    )
+    lines = [line.strip() for line in re.split(r"[\r\n]+", text) if line.strip()]
+    entries: list[str] = []
+    for line in lines:
+        parts = [part.strip() for part in line.split(";") if part.strip()]
+        if len(parts) <= 1:
+            entries.append(line)
+            continue
+        for part in parts:
+            entries.append(f"{part};")
+    return entries
 
 
 def _refine_database_comment_entry(entry: str) -> str:

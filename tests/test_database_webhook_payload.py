@@ -91,7 +91,18 @@ class DatabaseWebhookPayloadTests(unittest.TestCase):
                     "Lead",
                     "TR",
                     "Luca Na",
-                    "2026-06-22 21:18 | Luca Na | call again;",
+                    (
+                        "2026-06-22 22:50 - navm;\\n"
+                        "2026-06-21 20:17 - na;\\n"
+                        "2026-06-20 0:12 - na;\\n"
+                        "2026-06-19 13:18 - navm;\\n"
+                        "2026-06-18 21:50 - na;\\n"
+                        "2026-06-18 14:40 - na;\\n"
+                        "2026-06-17 22:19 - nadb;\\n"
+                        "2026-06-16 15:43 - nadb;\\n"
+                        "2026-06-16 8:25 - nadb;\\n"
+                        "2026-06-15 10:51 - Na;"
+                    ),
                 ]
             ]
             _write_workbook(input_path, headers, rows)
