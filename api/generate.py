@@ -163,6 +163,10 @@ def _optional_text(form: cgi.FieldStorage, name: str) -> str | None:
     return value or None
 
 
+def _is_truthy(value: str) -> bool:
+    return value.strip().casefold() in {"1", "true", "yes", "on"}
+
+
 def _safe_filename(raw_name: str | None, fallback: str) -> str:
     name = Path(raw_name or fallback).name
     name = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("._")
@@ -1319,9 +1323,13 @@ class handler(BaseHTTPRequestHandler):
                         response_bytes = output_path.read_bytes()
                         response_content_type = XLSX_CONTENT_TYPE
                     else:
+                        separate_m_inhousemedia = _is_truthy(
+                            _field_text(form, "separate_m_inhouse")
+                        )
                         generated_outputs = program_a_report.build_output_files(
                             **common_args,
                             pivot_name=pivot_name,
+                            separate_m_inhousemedia=separate_m_inhousemedia,
                         )
                         if len(generated_outputs) == 1:
                             only_output = generated_outputs[0]

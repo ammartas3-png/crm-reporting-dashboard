@@ -157,6 +157,21 @@
             </ul>
           </div>
 
+          <div id="separate-m-inhouse-row" class="toggle-row">
+            <input
+              id="separate-m-inhouse"
+              class="toggle-input"
+              type="checkbox"
+              name="separate_m_inhouse"
+              value="1"
+              checked
+            />
+            <label class="toggle-label" for="separate-m-inhouse">
+              <span class="toggle-switch"></span>
+              <span class="toggle-text">Separate M-Inhousemedia report</span>
+            </label>
+          </div>
+
           <div class="actions">
             <button id="submit-button" type="submit">Generate workbook</button>
             <p id="status" role="status" aria-live="polite"></p>
@@ -358,6 +373,8 @@
       const pivotHint = document.querySelector("#pivot-hint");
       const outputFile = document.querySelector("#output-file");
       const outputHint = document.querySelector("#output-hint");
+      const separateMInhouseRow = document.querySelector("#separate-m-inhouse-row");
+      const separateMInhouseToggle = document.querySelector("#separate-m-inhouse");
 
       const programConfig = {
         program_a: {
@@ -451,11 +468,15 @@
       }
 
       function syncProgramFields() {
-        const config = programConfig[selectedProgram()];
+        const selected = selectedProgram();
+        const config = programConfig[selected];
         pivotName.required = config.pivotRequired;
         pivotHint.textContent = config.pivotHint;
         outputFile.placeholder = config.output;
         outputHint.textContent = config.outputHint;
+        const showSeparateMInhouse = selected === "program_a";
+        separateMInhouseRow.hidden = !showSeparateMInhouse;
+        separateMInhouseToggle.disabled = !showSeparateMInhouse;
       }
 
       function crmRows() {

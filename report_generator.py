@@ -1041,6 +1041,7 @@ def build_output_files(
     output_file: Path,
     powerbi_sheet: str | None = None,
     crm_sheet: str | None = None,
+    separate_m_inhousemedia: bool = True,
 ) -> list[Path]:
     if len(crm_files) != len(platforms):
         raise ValueError("Each CRM file must have exactly one platform name.")
@@ -1055,7 +1056,7 @@ def build_output_files(
     all_rows.sort(key=lambda row: normalize_status(row.get("Status", "")))
     general_rows, m_inhouse_rows = _split_rows_by_campaign(all_rows)
 
-    if m_inhouse_rows:
+    if separate_m_inhousemedia and m_inhouse_rows:
         suffix = output_file.suffix or ".xlsx"
         general_output = output_file.with_name(f"{output_file.stem}_general{suffix}")
         m_inhouse_output = output_file.with_name(
@@ -1098,6 +1099,7 @@ def build_output(
         output_file=output_file,
         powerbi_sheet=powerbi_sheet,
         crm_sheet=crm_sheet,
+        separate_m_inhousemedia=True,
     )
 
 

@@ -271,6 +271,76 @@ class ReportGeneratorTests(unittest.TestCase):
                 or (status_pivot_fill.start_color.rgb or "").endswith("FFDBB7")
             )
 
+    def test_build_output_files_keeps_single_file_when_split_toggle_off(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            powerbi = root / "powerbi.xlsx"
+            crm = root / "crm.xlsx"
+            output = root / "My_report.xlsx"
+
+            _write_workbook(
+                powerbi,
+                POWERBI_COLUMNS,
+                [
+                    [111, "BrandA", "| first ;", 1],
+                    [222, "BrandA", "| second ;", 2],
+                ],
+            )
+            _write_workbook(
+                crm,
+                [*CRM_COLUMNS, "Date of Birth"],
+                [
+                    [
+                        "Lead",
+                        111,
+                        "2026-05-09",
+                        "Jane Doe",
+                        "Sales",
+                        "Potential",
+                        "TR",
+                        "Campaign A",
+                        "Sub A",
+                        "Placement A",
+                        "Agent 1",
+                        "1990-01-01",
+                    ],
+                    [
+                        "Lead",
+                        222,
+                        "2026-05-09",
+                        "John Doe",
+                        "Sales",
+                        "Call Again",
+                        "TR",
+                        "M-Inhousemedia Alpha",
+                        "Sub B",
+                        "Placement B",
+                        "Agent 2",
+                        "1989-09-09",
+                    ],
+                ],
+            )
+
+            outputs = build_output_files(
+                powerbi_report=powerbi,
+                crm_files=[crm],
+                platforms=["BrandA"],
+                pivot_name="Status Pivot",
+                output_file=output,
+                separate_m_inhousemedia=False,
+            )
+            self.assertEqual([path.name for path in outputs], ["My_report.xlsx"])
+
+            workbook = load_workbook(root / "My_report.xlsx", data_only=False)
+            ws = workbook["CRM Output"]
+            campaign_col = PROGRAM_A_OUTPUT_COLUMNS.index("Campaign") + 1
+            campaigns = [
+                str(ws.cell(row, campaign_col).value or "")
+                for row in range(2, min(ws.max_row, 20) + 1)
+            ]
+            self.assertIn("Campaign A", campaigns)
+            self.assertIn("M-Inhousemedia Alpha", campaigns)
+
     def test_missing_powerbi_columns_reports_file_name(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "bad_powerbi.xlsx"
