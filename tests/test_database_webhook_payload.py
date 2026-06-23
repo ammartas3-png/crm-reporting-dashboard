@@ -91,7 +91,7 @@ class DatabaseWebhookPayloadTests(unittest.TestCase):
                     "Lead",
                     "TR",
                     "Luca Na",
-                    "2026-06-22 21:18 | Luca Na | vm;",
+                    "2026-06-22 21:18 | Luca Na | switched off;",
                 ]
             ]
             _write_workbook(input_path, headers, rows)
