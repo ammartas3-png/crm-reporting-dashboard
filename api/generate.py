@@ -86,6 +86,7 @@ DATABASE_CHECK_WEBHOOK_COLUMNS = [
     "Last 10 Comments",
     "Customer Status",
     "Country",
+    "Current Assigned Agent",
 ]
 DATABASE_CHECK_WEBHOOK_KEY_BY_COLUMN = {
     "Brand": "brand",
@@ -93,8 +94,41 @@ DATABASE_CHECK_WEBHOOK_KEY_BY_COLUMN = {
     "Last 10 Comments": "last 10 comments",
     "Customer Status": "customer status",
     "Country": "country",
+    "Current Assigned Agent": "Agent",
+}
+DATABASE_CHECK_NON_ACTION_COMMENTS = {
+    "NA",
+    "NA VM",
+    "VM",
+    "DVM",
+    "PU HU",
+    "REJ",
+    "no answer",
+    "no pickup",
+    "not picking",
+    "did not pick",
+    "hung up",
+    "hang up",
+    "hu",
+    "cut call",
+    "voicemail",
+    "voice mail",
+    "no reply",
+    "no response",
+    "no ring",
+    "beeping",
+    "no rout",
+    "could not hear",
+    "wrong ringing",
+    "empty",
+    "unattended",
+    "In Progress",
 }
 _DATABASE_CHECK_LOG_SHEET_CACHE: str | None = None
+_DATABASE_CHECK_NON_ACTION_COMMENTS_NORMALIZED = {
+    re.sub(r"[^a-z0-9]+", " ", item.strip().casefold()).strip()
+    for item in DATABASE_CHECK_NON_ACTION_COMMENTS
+}
 
 
 def _read_static_file(filename: str) -> bytes:
@@ -427,6 +461,73 @@ def _normalize_match_value(value: Any) -> str:
     if numeric_match:
         return str(int(float(text)))
     return text.casefold()
+
+
+def _normalize_comment_for_matching(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(value or "").strip().casefold()).strip()
+
+
+def _split_comment_entries(value: Any) -> list[str]:
+    text = str(value or "").strip()
+    if not text:
+        return []
+    return [line.strip() for line in re.split(r"[\r\n]+", text) if line.strip()]
+
+
+def _refine_database_comment_entry(entry: str) -> str:
+    text = str(entry or "").strip()
+    if not text:
+        return ""
+
+    if text.count("|") >= 2:
+        parts = [part.strip() for part in text.split("|")]
+        left = parts[0] if parts else ""
+        right = "|".join(parts[2:]).strip() if len(parts) >= 3 else ""
+        text = f"{left} - {right}".strip(" -") if left or right else text
+
+    payload = text
+    if " - " in payload:
+        payload = payload.split(" - ", 1)[1].strip()
+    payload = payload.strip()
+
+    if payload.casefold().startswith("email"):
+        return "NA"
+    return text
+
+
+def _comment_payload_text(entry: str) -> str:
+    text = str(entry or "").strip()
+    if not text:
+        return ""
+    if " - " in text:
+        text = text.split(" - ", 1)[1]
+    return text.strip().strip(";").strip()
+
+
+def _is_non_action_comment(entry: str) -> bool:
+    payload = _comment_payload_text(entry)
+    normalized = _normalize_comment_for_matching(payload)
+    if not normalized:
+        return True
+    if normalized in _DATABASE_CHECK_NON_ACTION_COMMENTS_NORMALIZED:
+        return True
+    if re.fullmatch(r"no answer(?: \d+)?", normalized):
+        return True
+    return False
+
+
+def _refine_database_comments(value: Any) -> tuple[str, bool]:
+    entries = _split_comment_entries(value)
+    if not entries:
+        return "", True
+
+    refined_entries = [_refine_database_comment_entry(entry) for entry in entries]
+    refined_entries = [entry for entry in refined_entries if entry]
+    if not refined_entries:
+        return "", True
+
+    all_non_action = all(_is_non_action_comment(entry) for entry in refined_entries)
+    return "\n".join(refined_entries), all_non_action
 
 
 def _item_value(item: dict[str, Any], candidate_keys: list[str]) -> Any:
@@ -942,10 +1043,20 @@ def _build_database_check_webhook_records(input_path: Path) -> list[dict[str, An
     for row in worksheet.iter_rows(min_row=header_row_index + 1, values_only=True):
         if not row or all(value in (None, "") for value in row):
             continue
-        record = {
-            DATABASE_CHECK_WEBHOOK_KEY_BY_COLUMN[column]: row[header_indexes[column]]
-            for column in DATABASE_CHECK_WEBHOOK_COLUMNS
-        }
+
+        raw_comments = row[header_indexes["Last 10 Comments"]]
+        refined_comments, ignore_row = _refine_database_comments(raw_comments)
+        if ignore_row:
+            continue
+
+        record: dict[str, Any] = {}
+        for column in DATABASE_CHECK_WEBHOOK_COLUMNS:
+            payload_key = DATABASE_CHECK_WEBHOOK_KEY_BY_COLUMN[column]
+            if column == "Last 10 Comments":
+                record[payload_key] = refined_comments
+            else:
+                record[payload_key] = row[header_indexes[column]]
+
         if all(value in (None, "") for value in record.values()):
             continue
         records.append(record)
