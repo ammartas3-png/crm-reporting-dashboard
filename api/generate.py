@@ -573,12 +573,11 @@ def _split_comment_entries(value: Any) -> list[str]:
     if not text:
         return []
 
-    # Some exports store escaped newlines as literal "\n" sequences.
-    text = (
-        text.replace("\\r\\n", "\n")
-        .replace("\\n", "\n")
-        .replace("\\r", "\n")
-    )
+    # Some exports store escaped newlines as literal "\n" or even "\\n" sequences.
+    # Normalize any backslash-escaped newline token(s) into real line breaks.
+    text = re.sub(r"\\+r\\+n", "\n", text)
+    text = re.sub(r"\\+n", "\n", text)
+    text = re.sub(r"\\+r", "\n", text)
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = re.sub(
         r";\s*(?=(?:\|\|\s*)?\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\b)",
