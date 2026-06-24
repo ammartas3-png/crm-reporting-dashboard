@@ -65,8 +65,8 @@ class DatabaseWebhookPayloadTests(unittest.TestCase):
             self.assertEqual(
                 record["last 10 comments"],
                 (
-                    "|| 2026-06-23 00:48 | Zawar Bh | na vm;\n\n"
-                    "|| 2026-06-22 23:57 | Zawar Bh | cb na vm;\n\n"
+                    "|| 2026-06-23 00:48 | Zawar Bh | na vm; "
+                    "|| 2026-06-22 23:57 | Zawar Bh | cb na vm; "
                     "|| 2026-06-22 23:56 | Zawar Bh | 28 years\n"
                     "Accountant\n"
                     "No Exp\n"
@@ -109,7 +109,7 @@ class DatabaseWebhookPayloadTests(unittest.TestCase):
             self.assertEqual(
                 records[0]["last 10 comments"],
                 (
-                    "|| 2026-06-22 21:18 | Luca Na | fw to vm;\n\n"
+                    "|| 2026-06-22 21:18 | Luca Na | fw to vm; "
                     "|| No timestamp line should stay;"
                 ),
             )
@@ -149,7 +149,7 @@ class DatabaseWebhookPayloadTests(unittest.TestCase):
             self.assertEqual(
                 records[0]["last 10 comments"],
                 (
-                    "|| 2026-06-22 22:50 | Luca Na | navm;\n\n"
+                    "|| 2026-06-22 22:50 | Luca Na | navm; "
                     "|| 2026-06-21 20:17 | Luca Na | na;"
                 ),
             )
@@ -187,7 +187,7 @@ class DatabaseWebhookPayloadTests(unittest.TestCase):
             self.assertEqual(
                 records[0]["last 10 comments"],
                 (
-                    "|| 2026-06-22 22:50 | Luca Na | navm;\n\n"
+                    "|| 2026-06-22 22:50 | Luca Na | navm; "
                     "|| 2026-06-21 20:17 | Luca Na | na;"
                 ),
             )

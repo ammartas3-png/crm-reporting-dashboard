@@ -700,7 +700,8 @@ def _normalize_database_comments(value: Any, row_agent: Any) -> str:
         for entry in entries
         if str(entry or "").strip()
     ]
-    return "\n\n".join(entry for entry in normalized_entries if entry)
+    # Do not add extra newline separators; use "||" prefix only.
+    return " ".join(entry for entry in normalized_entries if entry)
 
 
 def _item_value(item: dict[str, Any], candidate_keys: list[str]) -> Any:
