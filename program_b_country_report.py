@@ -1,6 +1,7 @@
-"""Program B: create a CRM country-split workbook.
+"""Bulk Country Reports: create CRM country-split workbooks.
 
-Program B shares the CRM/PowerBI merge rules with Program A, then writes:
+Bulk Country Reports shares the CRM/PowerBI merge rules with Report Generator,
+then writes:
 
 - a "Main Report" sheet with all rows, a status pivot labelled "M-Inhousemedia",
   and a call-attempts pivot below the data table;
@@ -30,6 +31,7 @@ from report_generator import (
     NO_COMMENT_STATUSES,
     OUTPUT_COLUMNS,
     POWERBI_COLUMNS,
+    STATUS_LIST,
     STATUS_COLORS,
     comments_for_status,
     extract_comments,
@@ -88,6 +90,35 @@ def header_indexes(
     }
 
 
+def powerbi_header_indexes_and_rows(worksheet, path: Path):
+    """Return PowerBI column indexes and an iterator positioned after the header.
+
+    PowerBI exports usually have the table headers on row 1. Some exports include
+    filter/info rows first, with the actual table headers on row 3. Try row 1
+    first; if required columns are missing, skip row 2 and try row 3.
+    """
+    rows = worksheet.iter_rows(values_only=True)
+
+    try:
+        first_row = next(rows)
+    except StopIteration as exc:
+        raise ValueError(f"{path.name} is empty") from exc
+
+    try:
+        return header_indexes(first_row, POWERBI_COLUMNS, path), rows
+    except ValueError as first_row_error:
+        try:
+            next(rows)
+            third_row = next(rows)
+        except StopIteration as exc:
+            raise first_row_error from exc
+
+        try:
+            return header_indexes(third_row, POWERBI_COLUMNS, path), rows
+        except ValueError as exc:
+            raise first_row_error from exc
+
+
 def _normalize_call_attempts(value: Any) -> int:
     if value is None or value == "":
         return 1
@@ -103,14 +134,7 @@ def read_powerbi_lookup(
     sheet_name: str | None = None,
 ) -> dict[tuple[str, str], dict[str, Any]]:
     worksheet = worksheet_from_file(powerbi_report, sheet_name)
-    rows = worksheet.iter_rows(values_only=True)
-
-    try:
-        headers = next(rows)
-    except StopIteration as exc:
-        raise ValueError(f"{powerbi_report.name} is empty") from exc
-
-    indexes = header_indexes(headers, POWERBI_COLUMNS, powerbi_report)
+    indexes, rows = powerbi_header_indexes_and_rows(worksheet, powerbi_report)
     lookup: dict[tuple[str, str], dict[str, Any]] = {}
 
     for row in rows:
@@ -368,15 +392,8 @@ def _write_pivot_status(
     main_pivot_status_col_letter: str | None = None,
     main_pivot_status_row_map: dict[str, int] | None = None,
 ) -> tuple[int, dict[str, int]]:
-    seen_lower: set[str] = set()
-    ordered_statuses: list[str] = []
-    for row in rows:
-        status = str(row.get("Status", "") or "").strip()
-        status_key = status.lower()
-        if status and status_key not in seen_lower:
-            seen_lower.add(status_key)
-            ordered_statuses.append(status)
-    ordered_statuses.sort(key=str.lower)
+    del rows
+    ordered_statuses = STATUS_LIST
 
     label_col = start_col
     status_col = start_col + 1

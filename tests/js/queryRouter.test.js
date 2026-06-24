@@ -36,18 +36,21 @@ const data = {
       Country: "Turkey",
       "First Call Agent": "Ahmet",
       Status: "Potential",
+      "Hire Date": "2026-04-10",
     },
     {
       Created: "2026-05-02",
       Country: "Turkey",
       "First Call Agent": "Ayse",
       Status: "Potential",
+      "Hire Date": "2026-03-11",
     },
     {
       Created: "2026-04-02",
       Country: "Germany",
       "First Call Agent": "Ahmet",
       Status: "Potential",
+      "Hire Date": "2025-12-01",
     },
   ],
   ftd: [
@@ -95,4 +98,19 @@ test("answerQuery applies month and country filters", async () => {
 
 test("answerQuery can sum simple transaction amounts", async () => {
   assert.equal(await answer("Turkey deposit transactions today"), "transaction amount (today, Turkey, Deposit): 100");
+});
+
+test("parseQuery recognizes last-months agent hire-date request", () => {
+  const parsed = parseQuery("last 4 monthta agnet isimleri ise giris tarihleri", NOW);
+
+  assert.equal(parsed.type, "agentHireDates");
+  assert.equal(parsed.tabKey, "leads");
+  assert.equal(parsed.filters.months, 4);
+});
+
+test("answerQuery returns agent hire dates in English", async () => {
+  const reply = await answer("last 4 months agent hire dates");
+  assert.match(reply, /^Agents and hire dates from the last 4 months:/);
+  assert.match(reply, /- Ayse — 2026-03-11/);
+  assert.match(reply, /- Ahmet — 2026-04-10/);
 });
