@@ -87,6 +87,7 @@ DATABASE_CHECK_WEBHOOK_COLUMNS = [
     "Customer Status",
     "Country",
     "Current Assigned Agent",
+    "Current Agent Office",
 ]
 DATABASE_CHECK_WEBHOOK_KEY_BY_COLUMN = {
     "Brand": "brand",
@@ -95,6 +96,7 @@ DATABASE_CHECK_WEBHOOK_KEY_BY_COLUMN = {
     "Customer Status": "customer status",
     "Country": "country",
     "Current Assigned Agent": "Agent",
+    "Current Agent Office": "Current Agent Office",
 }
 DATABASE_CHECK_NON_ACTION_COMMENTS = {
     "NA",
@@ -589,25 +591,34 @@ def _split_comment_entries(value: Any) -> list[str]:
     return entries
 
 
-def _refine_database_comment_entry(entry: str) -> str:
+def _normalize_database_comment_entry(entry: str, row_agent: Any) -> str:
     text = str(entry or "").strip()
     if not text:
         return ""
 
-    if text.count("|") >= 2:
-        parts = [part.strip() for part in text.split("|")]
-        left = parts[0] if parts else ""
-        right = "|".join(parts[2:]).strip() if len(parts) >= 3 else ""
-        text = f"{left} - {right}".strip(" -") if left or right else text
+    # Keep already-normalized lines untouched.
+    if re.match(
+        r"^\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\s*\|\s*[^|]+\s*\|\s*.*$",
+        text,
+    ):
+        return text
 
-    payload = text
-    if " - " in payload:
-        payload = payload.split(" - ", 1)[1].strip()
-    payload = payload.strip()
+    timestamp_match = re.match(
+        r"^(?P<timestamp>\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2})\s*(?P<sep>\||-)\s*(?P<body>.*)$",
+        text,
+    )
+    if not timestamp_match:
+        return text
 
-    if payload.casefold().startswith("email"):
-        return "NA"
-    return text
+    timestamp_text = timestamp_match.group("timestamp").strip()
+    comment_body = timestamp_match.group("body").strip()
+    if timestamp_match.group("sep") == "|" and "|" in comment_body:
+        return text
+
+    fallback_agent = str(row_agent or "").strip()
+    if not fallback_agent:
+        return text
+    return f"{timestamp_text} | {fallback_agent} | {comment_body}"
 
 
 def _comment_payload_text(entry: str) -> str:
@@ -645,6 +656,18 @@ def _refine_database_comments(value: Any) -> tuple[str, bool]:
 
     all_non_action = all(_is_non_action_comment(entry) for entry in refined_entries)
     return "\n".join(refined_entries), all_non_action
+
+
+def _normalize_database_comments(value: Any, row_agent: Any) -> str:
+    entries = _split_comment_entries(value)
+    if not entries:
+        return ""
+    normalized_entries = [
+        _normalize_database_comment_entry(entry, row_agent)
+        for entry in entries
+        if str(entry or "").strip()
+    ]
+    return "\n".join(normalized_entries)
 
 
 def _item_value(item: dict[str, Any], candidate_keys: list[str]) -> Any:
@@ -1155,6 +1178,28 @@ def _build_database_check_webhook_records(input_path: Path) -> list[dict[str, An
     workbook = load_workbook(input_path, data_only=True)
     worksheet = workbook.active
     header_row_index, header_indexes = _resolve_input_header_indexes(worksheet)
+    header_row_values = next(
+        worksheet.iter_rows(min_row=header_row_index, max_row=header_row_index, values_only=True),
+        (),
+    )
+    all_header_indexes: dict[str, int] = {}
+    for col_index, value in enumerate(header_row_values):
+        normalized = _normalize_header_key(value)
+        if normalized and normalized not in all_header_indexes:
+            all_header_indexes[normalized] = col_index
+
+    office_col_index = next(
+        (
+            all_header_indexes[key]
+            for key in (
+                _normalize_header_key("Current Agent Office"),
+                _normalize_header_key("Agent Office"),
+                _normalize_header_key("Current Assigned Agent Office"),
+            )
+            if key in all_header_indexes
+        ),
+        None,
+    )
 
     records: list[dict[str, Any]] = []
     for row in worksheet.iter_rows(min_row=header_row_index + 1, values_only=True):
@@ -1162,15 +1207,19 @@ def _build_database_check_webhook_records(input_path: Path) -> list[dict[str, An
             continue
 
         raw_comments = row[header_indexes["Last 10 Comments"]]
-        refined_comments, ignore_row = _refine_database_comments(raw_comments)
-        if ignore_row:
-            continue
+        row_agent = row[header_indexes["Current Assigned Agent"]]
+        normalized_comments = _normalize_database_comments(raw_comments, row_agent)
 
         record: dict[str, Any] = {}
         for column in DATABASE_CHECK_WEBHOOK_COLUMNS:
             payload_key = DATABASE_CHECK_WEBHOOK_KEY_BY_COLUMN[column]
             if column == "Last 10 Comments":
-                record[payload_key] = refined_comments
+                record[payload_key] = normalized_comments
+            elif column == "Current Agent Office":
+                if office_col_index is not None and office_col_index < len(row):
+                    record[payload_key] = row[office_col_index]
+                else:
+                    record[payload_key] = ""
             else:
                 record[payload_key] = row[header_indexes[column]]
 

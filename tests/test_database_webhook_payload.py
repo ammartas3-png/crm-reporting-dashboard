@@ -19,7 +19,7 @@ def _write_workbook(path: Path, headers: list[str], rows: list[list[object]]) ->
 
 
 class DatabaseWebhookPayloadTests(unittest.TestCase):
-    def test_build_webhook_records_includes_agent_and_refines_comments(self) -> None:
+    def test_build_webhook_records_normalizes_dash_format_to_pipe(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             input_path = Path(temp_dir) / "database_input.xlsx"
             headers = [
@@ -29,6 +29,7 @@ class DatabaseWebhookPayloadTests(unittest.TestCase):
                 "Customer Status",
                 "Country",
                 "Current Assigned Agent",
+                "Current Agent Office",
                 "Last 10 Comments",
             ]
             rows = [
@@ -38,23 +39,12 @@ class DatabaseWebhookPayloadTests(unittest.TestCase):
                     "Client A",
                     "Lead",
                     "TR",
-                    "Luca Na",
+                    "Zawar Bh",
+                    "IN Office",
                     (
-                        "2026-06-22 21:18 | Luca Na | vm;\n"
-                        "2026-06-22 21:16 | Luca Na | vm;\n"
-                        "2026-06-22 21:16 | Luca Na | In Progress;"
-                    ),
-                ],
-                [
-                    "BrandB",
-                    2002,
-                    "Client B",
-                    "Potential",
-                    "DE",
-                    "Marta K",
-                    (
-                        "2026-06-22 20:00 | Marta K | Email follow up;\n"
-                        "2026-06-22 19:00 | Marta K | Client asked for callback;"
+                        "2026-06-22 14:36 - pu said i dont have funds;\n"
+                        "2026-06-22 14:40 | Zawar Bh | already normalized;\n"
+                        "No timestamp line should stay;"
                     ),
                 ],
             ]
@@ -64,14 +54,21 @@ class DatabaseWebhookPayloadTests(unittest.TestCase):
 
             self.assertEqual(len(records), 1)
             record = records[0]
-            self.assertEqual(record["brand"], "BrandB")
-            self.assertEqual(record["account no"], 2002)
-            self.assertEqual(record["country"], "DE")
-            self.assertEqual(record["Agent"], "Marta K")
-            self.assertIn("NA", record["last 10 comments"])
-            self.assertIn("2026-06-22 19:00 - Client asked for callback;", record["last 10 comments"])
+            self.assertEqual(record["brand"], "BrandA")
+            self.assertEqual(record["account no"], 1001)
+            self.assertEqual(record["country"], "TR")
+            self.assertEqual(record["Agent"], "Zawar Bh")
+            self.assertEqual(record["Current Agent Office"], "IN Office")
+            self.assertEqual(
+                record["last 10 comments"],
+                (
+                    "2026-06-22 14:36 | Zawar Bh | pu said i dont have funds;\n"
+                    "2026-06-22 14:40 | Zawar Bh | already normalized;\n"
+                    "No timestamp line should stay;"
+                ),
+            )
 
-    def test_build_webhook_records_errors_when_all_rows_ignored(self) -> None:
+    def test_build_webhook_records_keeps_non_action_comments(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             input_path = Path(temp_dir) / "database_input.xlsx"
             headers = [
@@ -81,6 +78,7 @@ class DatabaseWebhookPayloadTests(unittest.TestCase):
                 "Customer Status",
                 "Country",
                 "Current Assigned Agent",
+                "Current Agent Office",
                 "Last 10 Comments",
             ]
             rows = [
@@ -91,15 +89,20 @@ class DatabaseWebhookPayloadTests(unittest.TestCase):
                     "Lead",
                     "TR",
                     "Luca Na",
-                    "2026-06-22 21:18 | Luca Na | fw to vm;",
+                    "TR Office",
+                    "2026-06-22 21:18 - fw to vm;",
                 ]
             ]
             _write_workbook(input_path, headers, rows)
 
-            with self.assertRaisesRegex(ValueError, "No usable rows were found"):
-                generate._build_database_check_webhook_records(input_path)
+            records = generate._build_database_check_webhook_records(input_path)
+            self.assertEqual(len(records), 1)
+            self.assertEqual(
+                records[0]["last 10 comments"],
+                "2026-06-22 21:18 | Luca Na | fw to vm;",
+            )
 
-    def test_build_webhook_records_ignores_escaped_newline_na_vm_block(self) -> None:
+    def test_build_webhook_records_preserves_escaped_newline_order(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             input_path = Path(temp_dir) / "database_input.xlsx"
             headers = [
@@ -109,6 +112,7 @@ class DatabaseWebhookPayloadTests(unittest.TestCase):
                 "Customer Status",
                 "Country",
                 "Current Assigned Agent",
+                "Current Agent Office",
                 "Last 10 Comments",
             ]
             rows = [
@@ -119,24 +123,26 @@ class DatabaseWebhookPayloadTests(unittest.TestCase):
                     "Lead",
                     "TR",
                     "Luca Na",
+                    "TR Office",
                     (
                         "2026-06-22 22:50 - navm;\\n"
                         "2026-06-21 20:17 - na;\\n"
-                        "2026-06-20 0:12 - na;\\n"
-                        "2026-06-19 13:18 - navm;\\n"
-                        "2026-06-18 21:50 - na;\\n"
-                        "2026-06-18 14:40 - na;\\n"
-                        "2026-06-17 22:19 - nadb;\\n"
-                        "2026-06-16 15:43 - nadb;\\n"
-                        "2026-06-16 8:25 - nadb;\\n"
-                        "2026-06-15 10:51 - Na;"
+                        "2026-06-20 00:12 - in progress;"
                     ),
                 ]
             ]
             _write_workbook(input_path, headers, rows)
 
-            with self.assertRaisesRegex(ValueError, "No usable rows were found"):
-                generate._build_database_check_webhook_records(input_path)
+            records = generate._build_database_check_webhook_records(input_path)
+            self.assertEqual(len(records), 1)
+            self.assertEqual(
+                records[0]["last 10 comments"],
+                (
+                    "2026-06-22 22:50 | Luca Na | navm;\n"
+                    "2026-06-21 20:17 | Luca Na | na;\n"
+                    "2026-06-20 00:12 | Luca Na | in progress;"
+                ),
+            )
 
 
 if __name__ == "__main__":
