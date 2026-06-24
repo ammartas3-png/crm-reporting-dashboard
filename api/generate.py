@@ -579,16 +579,42 @@ def _split_comment_entries(value: Any) -> list[str]:
         .replace("\\n", "\n")
         .replace("\\r", "\n")
     )
-    lines = [line.strip() for line in re.split(r"[\r\n]+", text) if line.strip()]
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(
+        r";\s*(?=(?:\|\|\s*)?\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\b)",
+        ";\n",
+        text,
+    )
+
+    timestamp_prefix = re.compile(r"^(?:\|\|\s*)?\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\b")
     entries: list[str] = []
-    for line in lines:
-        parts = [part.strip() for part in line.split(";") if part.strip()]
-        if len(parts) <= 1:
-            entries.append(line)
+    current_lines: list[str] = []
+
+    for raw_line in text.split("\n"):
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            if current_lines:
+                current_lines.append("")
             continue
-        for part in parts:
-            entries.append(f"{part};")
-    return entries
+
+        if timestamp_prefix.match(stripped):
+            if current_lines:
+                entries.append("\n".join(current_lines).strip())
+            current_lines = [stripped]
+        else:
+            if current_lines and current_lines[-1].strip().endswith(";"):
+                entries.append("\n".join(current_lines).strip())
+                current_lines = [line]
+                continue
+            if not current_lines:
+                current_lines = [line]
+            else:
+                current_lines.append(line)
+
+    if current_lines:
+        entries.append("\n".join(current_lines).strip())
+    return [entry for entry in entries if entry]
 
 
 def _normalize_database_comment_entry(entry: str, row_agent: Any) -> str:
@@ -596,29 +622,38 @@ def _normalize_database_comment_entry(entry: str, row_agent: Any) -> str:
     if not text:
         return ""
 
-    # Keep already-normalized lines untouched.
-    if re.match(
-        r"^\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\s*\|\s*[^|]+\s*\|\s*.*$",
-        text,
-    ):
-        return text
+    lines = text.split("\n")
+    first_line = lines[0].strip()
+    remaining_lines = lines[1:]
 
-    timestamp_match = re.match(
-        r"^(?P<timestamp>\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2})\s*(?P<sep>\||-)\s*(?P<body>.*)$",
-        text,
+    pipe_match = re.match(
+        r"^(?:\|\|\s*)?(?P<timestamp>\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2})\s*\|\s*(?P<agent>[^|]+?)\s*\|\s*(?P<body>.*)$",
+        first_line,
     )
-    if not timestamp_match:
-        return text
+    if pipe_match:
+        timestamp_text = pipe_match.group("timestamp").strip()
+        agent_text = pipe_match.group("agent").strip()
+        if not agent_text:
+            agent_text = str(row_agent or "").strip()
+        body_lines = [pipe_match.group("body"), *remaining_lines]
+        comment_body = "\n".join(body_lines).rstrip()
+        return f"|| {timestamp_text} | {agent_text} | {comment_body}".rstrip()
 
-    timestamp_text = timestamp_match.group("timestamp").strip()
-    comment_body = timestamp_match.group("body").strip()
-    if timestamp_match.group("sep") == "|" and "|" in comment_body:
-        return text
+    dash_match = re.match(
+        r"^(?:\|\|\s*)?(?P<timestamp>\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2})\s*-\s*(?P<body>.*)$",
+        first_line,
+    )
+    if dash_match:
+        fallback_agent = str(row_agent or "").strip()
+        if not fallback_agent:
+            return f"|| {text}"
+        timestamp_text = dash_match.group("timestamp").strip()
+        body_lines = [dash_match.group("body"), *remaining_lines]
+        comment_body = "\n".join(body_lines).rstrip()
+        return f"|| {timestamp_text} | {fallback_agent} | {comment_body}".rstrip()
 
-    fallback_agent = str(row_agent or "").strip()
-    if not fallback_agent:
-        return text
-    return f"{timestamp_text} | {fallback_agent} | {comment_body}"
+    # Keep non-timestamp blocks untouched, but prefix for easy parser splitting.
+    return f"|| {text}"
 
 
 def _comment_payload_text(entry: str) -> str:
@@ -649,13 +684,12 @@ def _refine_database_comments(value: Any) -> tuple[str, bool]:
     if not entries:
         return "", True
 
-    refined_entries = [_refine_database_comment_entry(entry) for entry in entries]
-    refined_entries = [entry for entry in refined_entries if entry]
-    if not refined_entries:
+    normalized_entries = [entry for entry in entries if entry]
+    if not normalized_entries:
         return "", True
 
-    all_non_action = all(_is_non_action_comment(entry) for entry in refined_entries)
-    return "\n".join(refined_entries), all_non_action
+    all_non_action = all(_is_non_action_comment(entry) for entry in normalized_entries)
+    return "\n".join(normalized_entries), all_non_action
 
 
 def _normalize_database_comments(value: Any, row_agent: Any) -> str:
@@ -667,7 +701,7 @@ def _normalize_database_comments(value: Any, row_agent: Any) -> str:
         for entry in entries
         if str(entry or "").strip()
     ]
-    return "\n".join(normalized_entries)
+    return "\n\n".join(entry for entry in normalized_entries if entry)
 
 
 def _item_value(item: dict[str, Any], candidate_keys: list[str]) -> Any:

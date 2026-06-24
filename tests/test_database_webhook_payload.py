@@ -19,7 +19,7 @@ def _write_workbook(path: Path, headers: list[str], rows: list[list[object]]) ->
 
 
 class DatabaseWebhookPayloadTests(unittest.TestCase):
-    def test_build_webhook_records_normalizes_dash_format_to_pipe(self) -> None:
+    def test_build_webhook_records_formats_comments_as_pipe_blocks(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             input_path = Path(temp_dir) / "database_input.xlsx"
             headers = [
@@ -42,9 +42,12 @@ class DatabaseWebhookPayloadTests(unittest.TestCase):
                     "Zawar Bh",
                     "IN Office",
                     (
-                        "2026-06-22 14:36 - pu said i dont have funds;\n"
-                        "2026-06-22 14:40 | Zawar Bh | already normalized;\n"
-                        "No timestamp line should stay;"
+                        "2026-06-23 00:48 - na vm;\\n"
+                        "2026-06-22 23:57 - cb na vm;\\n"
+                        "2026-06-22 23:56 - 28 years\\n"
+                        "Accountant\\n"
+                        "No Exp\\n"
+                        "Intro and explained all details..."
                     ),
                 ],
             ]
@@ -62,13 +65,16 @@ class DatabaseWebhookPayloadTests(unittest.TestCase):
             self.assertEqual(
                 record["last 10 comments"],
                 (
-                    "2026-06-22 14:36 | Zawar Bh | pu said i dont have funds;\n"
-                    "2026-06-22 14:40 | Zawar Bh | already normalized;\n"
-                    "No timestamp line should stay;"
+                    "|| 2026-06-23 00:48 | Zawar Bh | na vm;\n\n"
+                    "|| 2026-06-22 23:57 | Zawar Bh | cb na vm;\n\n"
+                    "|| 2026-06-22 23:56 | Zawar Bh | 28 years\n"
+                    "Accountant\n"
+                    "No Exp\n"
+                    "Intro and explained all details..."
                 ),
             )
 
-    def test_build_webhook_records_keeps_non_action_comments(self) -> None:
+    def test_build_webhook_records_keeps_existing_pipe_and_plain_text_blocks(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             input_path = Path(temp_dir) / "database_input.xlsx"
             headers = [
@@ -90,7 +96,10 @@ class DatabaseWebhookPayloadTests(unittest.TestCase):
                     "TR",
                     "Luca Na",
                     "TR Office",
-                    "2026-06-22 21:18 - fw to vm;",
+                    (
+                        "2026-06-22 21:18 | Luca Na | fw to vm;\\n"
+                        "No timestamp line should stay;"
+                    ),
                 ]
             ]
             _write_workbook(input_path, headers, rows)
@@ -99,10 +108,13 @@ class DatabaseWebhookPayloadTests(unittest.TestCase):
             self.assertEqual(len(records), 1)
             self.assertEqual(
                 records[0]["last 10 comments"],
-                "2026-06-22 21:18 | Luca Na | fw to vm;",
+                (
+                    "|| 2026-06-22 21:18 | Luca Na | fw to vm;\n\n"
+                    "|| No timestamp line should stay;"
+                ),
             )
 
-    def test_build_webhook_records_preserves_escaped_newline_order(self) -> None:
+    def test_build_webhook_records_uses_row_agent_when_dash_format_has_no_agent(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             input_path = Path(temp_dir) / "database_input.xlsx"
             headers = [
@@ -126,8 +138,7 @@ class DatabaseWebhookPayloadTests(unittest.TestCase):
                     "TR Office",
                     (
                         "2026-06-22 22:50 - navm;\\n"
-                        "2026-06-21 20:17 - na;\\n"
-                        "2026-06-20 00:12 - in progress;"
+                        "2026-06-21 20:17 - na;"
                     ),
                 ]
             ]
@@ -138,9 +149,8 @@ class DatabaseWebhookPayloadTests(unittest.TestCase):
             self.assertEqual(
                 records[0]["last 10 comments"],
                 (
-                    "2026-06-22 22:50 | Luca Na | navm;\n"
-                    "2026-06-21 20:17 | Luca Na | na;\n"
-                    "2026-06-20 00:12 | Luca Na | in progress;"
+                    "|| 2026-06-22 22:50 | Luca Na | navm;\n\n"
+                    "|| 2026-06-21 20:17 | Luca Na | na;"
                 ),
             )
 
