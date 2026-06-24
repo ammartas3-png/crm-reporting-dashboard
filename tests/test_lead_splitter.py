@@ -48,6 +48,7 @@ class LeadSplitterByCountriesTests(unittest.TestCase):
                 ["", "TR1-EN", "Alice", "", "1001", "New", "Camp A", "", "Switzerland", "", "", "", "", "1", "0"],
                 ["", "TR1-EN", "Alice", "", "1002", "Call Again", "Camp A", "", "Switzerland", "", "", "", "", "1", "1"],
                 ["", "FR1-FR", "Bob", "", "1003", "No Answer", "Camp B", "", "France", "", "", "", "", "1", "0"],
+                ["", "TR1-BD", "Chad", "", "1004", "No Answer", "Camp C", "", "India", "", "", "", "", "1", "0"],
             ]
             _write_lead_input(input_path, headers, rows)
 
@@ -69,6 +70,15 @@ class LeadSplitterByCountriesTests(unittest.TestCase):
                 [worksheet.cell(1, column).value for column in range(1, 8)],
                 ["Desk", "Country", "Campaign", "Status", "Leads", "FTD", "CR"],
             )
+
+            desk_labels: list[str] = []
+            for desk_col in (1, 9, 17):
+                for row_idx in range(2, worksheet.max_row + 1):
+                    value = str(worksheet.cell(row_idx, desk_col).value or "").strip()
+                    if value:
+                        desk_labels.append(value)
+            self.assertFalse(any("BD" in label for label in desk_labels), "BD desk should be merged into IN.")
+            self.assertTrue(any(label == "IN" or label.startswith("IN Total") for label in desk_labels))
 
             telemarketing_found = False
             for status_col in (4, 12, 20):

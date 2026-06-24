@@ -135,7 +135,11 @@ def get_desk2(desk) -> str:
     if not isinstance(desk, str):
         return str(desk)
     parts = desk.split("-")
-    return parts[1] if len(parts) >= 2 else desk
+    desk_value = parts[1] if len(parts) >= 2 else desk
+    # Merge BD desk into IN desk across splitter outputs.
+    if str(desk_value).strip().upper() == "BD":
+        return "IN"
+    return desk_value
 
 
 def get_office(desk) -> str:
