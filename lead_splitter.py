@@ -355,6 +355,209 @@ def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col) -> None:
         ws.column_dimensions[get_column_letter(col_index)].width = width
 
 
+def build_lead_splitter_by_countries(
+    df,
+    output_path,
+    campaign_col,
+    country_col,
+    desk_col,
+    status_col,
+    n_col,
+    o_col,
+) -> None:
+    data = df.copy()
+    data["_DESK2"] = data[desk_col].apply(get_desk2)
+    data["_N1"] = _flag_is_one(data[n_col])
+    data["_O1"] = _flag_is_one(data[o_col])
+    # Align with AFF behavior: FTD-marked rows are treated as Telemarketing.
+    data.loc[data["_O1"] == 1, status_col] = "Telemarketing"
+
+    agg = (
+        data.groupby(["_DESK2", country_col, campaign_col, status_col], sort=True)
+        .agg(Assigned=("_N1", "sum"), FTD=("_O1", "sum"))
+        .reset_index()
+    )
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Lead splitter by countries"
+
+    header_fill = PatternFill("solid", start_color="1F4E79", end_color="1F4E79")
+    country_total_fill = PatternFill("solid", start_color="D9EAF7", end_color="D9EAF7")
+    campaign_total_fill = PatternFill("solid", start_color="CCE5FF", end_color="CCE5FF")
+    desk_total_fill = PatternFill("solid", start_color="BDD7EE", end_color="BDD7EE")
+    white_fill = PatternFill("solid", start_color="FFFFFF", end_color="FFFFFF")
+    header_font = Font(bold=True, color="FFFFFF", name="Arial", size=10)
+    bold_font = Font(bold=True, color="000000", name="Arial", size=10)
+    normal_font = Font(bold=False, color="000000", name="Arial", size=10)
+    black_border = make_border("000000")
+
+    section_specs = {
+        "left": {"start_col": 1},
+        "middle": {"start_col": 9},
+        "right": {"start_col": 17},
+    }
+    lane_rows = {lane: 2 for lane in section_specs}
+
+    def write_header(start_col: int) -> None:
+        headers = ["Desk", "Country", "Campaign", "Status", "Leads", "FTD", "CR"]
+        for offset, header in enumerate(headers):
+            cell = ws.cell(row=1, column=start_col + offset, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.border = black_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[1].height = 20
+
+    def write_row(
+        start_col: int,
+        row_i: int,
+        desk_val: str,
+        country_val: str,
+        campaign_val: str,
+        status_val: str,
+        leads: int,
+        ftd: int,
+        *,
+        is_total: bool = False,
+        total_fill: PatternFill | None = None,
+    ) -> None:
+        cr_value = _cr(leads, ftd)
+        values = [desk_val, country_val, campaign_val, status_val, leads, ftd, cr_value]
+        row_fill = total_fill if is_total and total_fill is not None else white_fill
+        for offset, value in enumerate(values):
+            col_i = start_col + offset
+            cell = ws.cell(row=row_i, column=col_i, value=value)
+            cell.border = black_border
+            cell.font = bold_font if is_total else normal_font
+
+            if offset <= 3:
+                cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+            else:
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+
+            if offset == 6:
+                cell.number_format = "0%"
+
+            if (not is_total) and offset == 6:
+                cell.fill = _cr_fill_for_ratio(cr_value)
+            else:
+                cell.fill = row_fill
+        ws.row_dimensions[row_i].height = 16
+
+    for lane_spec in section_specs.values():
+        write_header(lane_spec["start_col"])
+
+    desks = sorted(agg["_DESK2"].dropna().unique().tolist(), key=lambda x: str(x))
+    desks_by_lane: dict[str, list[str]] = {"left": [], "middle": [], "right": []}
+    for desk in desks:
+        desks_by_lane[_pivot_lane_for_desk(str(desk))].append(str(desk))
+
+    for lane_name, lane_desks in desks_by_lane.items():
+        start_col = section_specs[lane_name]["start_col"]
+        current_row = lane_rows[lane_name]
+
+        for desk_index, desk_name in enumerate(lane_desks):
+            desk_df = agg[agg["_DESK2"] == desk_name].copy()
+            country_totals = desk_df.groupby(country_col)["Assigned"].sum().sort_values(ascending=False)
+            country_order = country_totals.index.tolist()
+            first_desk_row = True
+
+            for country in country_order:
+                country_df = desk_df[desk_df[country_col] == country].copy()
+                campaign_totals = (
+                    country_df.groupby(campaign_col)["Assigned"].sum().sort_values(ascending=False)
+                )
+                campaign_order = campaign_totals.index.tolist()
+                first_country_row = True
+
+                for campaign in campaign_order:
+                    campaign_df = country_df[country_df[campaign_col] == campaign].copy()
+                    campaign_df = campaign_df.sort_values(
+                        by=["Assigned", "FTD", status_col],
+                        ascending=[False, False, True],
+                    )
+                    first_campaign_row = True
+
+                    for _, item in campaign_df.iterrows():
+                        write_row(
+                            start_col,
+                            current_row,
+                            desk_name if first_desk_row else "",
+                            str(country) if first_country_row and pd.notna(country) else "",
+                            str(campaign) if first_campaign_row and pd.notna(campaign) else "",
+                            str(item[status_col]) if pd.notna(item[status_col]) else "",
+                            int(item["Assigned"]),
+                            int(item["FTD"]),
+                        )
+                        first_desk_row = False
+                        first_country_row = False
+                        first_campaign_row = False
+                        current_row += 1
+
+                    campaign_assigned = int(campaign_df["Assigned"].sum())
+                    campaign_ftd = int(campaign_df["FTD"].sum())
+                    write_row(
+                        start_col,
+                        current_row,
+                        "",
+                        "",
+                        f"{campaign} Total",
+                        "",
+                        campaign_assigned,
+                        campaign_ftd,
+                        is_total=True,
+                        total_fill=campaign_total_fill,
+                    )
+                    current_row += 1
+
+                country_assigned = int(country_df["Assigned"].sum())
+                country_ftd = int(country_df["FTD"].sum())
+                write_row(
+                    start_col,
+                    current_row,
+                    "",
+                    f"{country} Total",
+                    "",
+                    "",
+                    country_assigned,
+                    country_ftd,
+                    is_total=True,
+                    total_fill=country_total_fill,
+                )
+                current_row += 1
+
+            desk_assigned = int(desk_df["Assigned"].sum())
+            desk_ftd = int(desk_df["FTD"].sum())
+            write_row(
+                start_col,
+                current_row,
+                f"{desk_name} Total",
+                "",
+                "",
+                "",
+                desk_assigned,
+                desk_ftd,
+                is_total=True,
+                total_fill=desk_total_fill,
+            )
+            current_row += 1
+
+            if desk_index < len(lane_desks) - 1:
+                current_row += 1
+
+        lane_rows[lane_name] = current_row
+
+    for lane_start in (1, 9, 17):
+        lane_widths = [12, 20, 24, 18, 8, 6, 6]
+        for offset, width in enumerate(lane_widths):
+            ws.column_dimensions[get_column_letter(lane_start + offset)].width = width
+    ws.column_dimensions[get_column_letter(8)].width = 3
+    ws.column_dimensions[get_column_letter(16)].width = 3
+    ws.freeze_panes = "A2"
+    wb.save(output_path)
+
+
 AFF_BORDER = make_border("C8C8C8")
 AFF_BORDER_DARK = make_border("0D2340")
 AFF_FILL_HEADER = PatternFill("solid", start_color="17375E", end_color="17375E")
@@ -678,8 +881,10 @@ def build_outputs(
     output_dir: Path,
     lead_output_name: str | None = None,
     aff_output_name: str | None = None,
+    countries_output_name: str | None = None,
     generate_lead: bool = True,
     generate_aff: bool = True,
+    generate_countries: bool = False,
 ) -> dict[str, Path]:
     today = datetime.now()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -802,6 +1007,28 @@ def build_outputs(
         aff_output_path = output_dir / aff_name
         build_aff_by_status(df, aff_output_path, campaign_col, i_col, b_col, f_col, n_col, o_col)
         outputs["aff"] = aff_output_path
+
+    if generate_countries:
+        if campaign_col is None:
+            raise ValueError(
+                "Campaign column was not found, Lead splitter by countries output cannot be created."
+            )
+        countries_name = (
+            countries_output_name
+            or f"Lead Splitter by countries - {today.strftime('%d-%m')}.xlsx"
+        )
+        countries_output_path = output_dir / countries_name
+        build_lead_splitter_by_countries(
+            df,
+            countries_output_path,
+            campaign_col,
+            i_col,
+            b_col,
+            f_col,
+            n_col,
+            o_col,
+        )
+        outputs["countries"] = countries_output_path
 
     return outputs
 
