@@ -110,7 +110,7 @@ class DatabaseWebhookPayloadTests(unittest.TestCase):
                 records[0]["last 10 comments"],
                 (
                     "|| 2026-06-22 21:18 | Luca Na | fw to vm; "
-                    "|| No timestamp line should stay;"
+                    "No timestamp line should stay;"
                 ),
             )
 
@@ -152,6 +152,40 @@ class DatabaseWebhookPayloadTests(unittest.TestCase):
                     "|| 2026-06-22 22:50 | Luca Na | navm; "
                     "|| 2026-06-21 20:17 | Luca Na | na;"
                 ),
+            )
+
+    def test_build_webhook_records_removes_double_pipe_from_comment_body(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = Path(temp_dir) / "database_input.xlsx"
+            headers = [
+                "Brand",
+                "Account No",
+                "Client Name",
+                "Customer Status",
+                "Country",
+                "Current Assigned Agent",
+                "Current Agent Office",
+                "Last 10 Comments",
+            ]
+            rows = [
+                [
+                    "BrandA",
+                    1001,
+                    "Client A",
+                    "Lead",
+                    "TR",
+                    "Luca Na",
+                    "TR Office",
+                    "2026-06-21 20:17 - note with || marker;",
+                ]
+            ]
+            _write_workbook(input_path, headers, rows)
+
+            records = generate._build_database_check_webhook_records(input_path)
+            self.assertEqual(len(records), 1)
+            self.assertEqual(
+                records[0]["last 10 comments"],
+                "|| 2026-06-21 20:17 | Luca Na | note with | marker;",
             )
 
     def test_build_webhook_records_decodes_double_escaped_newlines(self) -> None:

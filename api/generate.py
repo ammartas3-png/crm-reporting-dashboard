@@ -625,17 +625,20 @@ def _normalize_database_comment_entry(entry: str, row_agent: Any) -> str:
     first_line = lines[0].strip()
     remaining_lines = lines[1:]
 
+    def _clean_double_pipe(value: str) -> str:
+        return re.sub(r"\|\|+", "|", value or "")
+
     pipe_match = re.match(
         r"^(?:\|\|\s*)?(?P<timestamp>\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2})\s*\|\s*(?P<agent>[^|]+?)\s*\|\s*(?P<body>.*)$",
         first_line,
     )
     if pipe_match:
         timestamp_text = pipe_match.group("timestamp").strip()
-        agent_text = pipe_match.group("agent").strip()
+        agent_text = _clean_double_pipe(pipe_match.group("agent")).strip()
         if not agent_text:
             agent_text = str(row_agent or "").strip()
         body_lines = [pipe_match.group("body"), *remaining_lines]
-        comment_body = "\n".join(body_lines).rstrip()
+        comment_body = _clean_double_pipe("\n".join(body_lines)).rstrip()
         return f"|| {timestamp_text} | {agent_text} | {comment_body}".rstrip()
 
     dash_match = re.match(
@@ -645,14 +648,14 @@ def _normalize_database_comment_entry(entry: str, row_agent: Any) -> str:
     if dash_match:
         fallback_agent = str(row_agent or "").strip()
         if not fallback_agent:
-            return f"|| {text}"
+            return _clean_double_pipe(text)
         timestamp_text = dash_match.group("timestamp").strip()
         body_lines = [dash_match.group("body"), *remaining_lines]
-        comment_body = "\n".join(body_lines).rstrip()
+        comment_body = _clean_double_pipe("\n".join(body_lines)).rstrip()
         return f"|| {timestamp_text} | {fallback_agent} | {comment_body}".rstrip()
 
-    # Keep non-timestamp blocks untouched, but prefix for easy parser splitting.
-    return f"|| {text}"
+    # Non-timestamp blocks stay without "||"; it is reserved for timestamp headers only.
+    return _clean_double_pipe(text)
 
 
 def _comment_payload_text(entry: str) -> str:
