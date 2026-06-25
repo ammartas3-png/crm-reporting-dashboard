@@ -1460,7 +1460,7 @@ class handler(BaseHTTPRequestHandler):
                         "Lead splitter input file",
                     )
                     lead_kind = (_field_text(form, "lead_kind") or "lead").lower()
-                    if lead_kind not in {"lead", "aff"}:
+                    if lead_kind not in {"lead", "aff", "countries"}:
                         raise ValueError("Invalid Lead Splitter output type requested.")
 
                     generated_outputs = lead_splitter.build_outputs(
@@ -1468,11 +1468,16 @@ class handler(BaseHTTPRequestHandler):
                         output_dir=tmp_path,
                         generate_lead=(lead_kind == "lead"),
                         generate_aff=(lead_kind == "aff"),
+                        generate_countries=(lead_kind == "countries"),
                     )
                     selected_output = generated_outputs.get(lead_kind)
                     if selected_output is None:
                         if lead_kind == "aff":
                             raise ValueError("AFF by Status output was not generated from this input.")
+                        if lead_kind == "countries":
+                            raise ValueError(
+                                "Lead splitter by countries output was not generated from this input."
+                            )
                         raise ValueError("Lead Splitter output was not generated from this input.")
                     response_filename = selected_output.name
                     response_bytes = selected_output.read_bytes()

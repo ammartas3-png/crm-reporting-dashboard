@@ -238,6 +238,9 @@
           <div class="actions">
             <button id="lead-generate-button" type="button">Generate Lead splitter</button>
             <button id="lead-aff-button" type="button" class="secondary">Generate by AFF</button>
+            <button id="lead-countries-button" type="button" class="secondary">
+              Lead splitter by countries
+            </button>
             <p id="lead-status" class="status-line" role="status" aria-live="polite"></p>
           </div>
         </form>
@@ -618,6 +621,7 @@
       const leadForm = document.querySelector("#lead-form");
       const leadGenerateButton = document.querySelector("#lead-generate-button");
       const leadAffButton = document.querySelector("#lead-aff-button");
+      const leadCountriesButton = document.querySelector("#lead-countries-button");
       const leadStatus = document.querySelector("#lead-status");
       const crForm = document.querySelector("#cr-form");
       const crSubmitButton = document.querySelector("#cr-submit-button");
@@ -696,23 +700,37 @@
 
         leadGenerateButton.disabled = true;
         leadAffButton.disabled = true;
+        leadCountriesButton.disabled = true;
         const isAff = kind === "aff";
+        const isCountries = kind === "countries";
         setGenericStatus(
           leadStatus,
           isAff
             ? "Uploading file and generating by AFF workbook..."
+            : isCountries
+              ? "Uploading file and generating Lead splitter by countries workbook..."
             : "Uploading file and generating Lead Splitter workbook...",
           "pending",
         );
 
         try {
-          await requestDownload(leadForm, isAff ? "AFF by Status.xlsx" : "Lead Splitter.xlsx", {
-            lead_kind: kind,
-          });
+          await requestDownload(
+            leadForm,
+            isAff
+              ? "AFF by Status.xlsx"
+              : isCountries
+                ? "Lead Splitter by countries.xlsx"
+              : "Lead Splitter.xlsx",
+            {
+              lead_kind: kind,
+            },
+          );
           setGenericStatus(
             leadStatus,
             isAff
               ? "Done. Your AFF workbook download has started."
+              : isCountries
+                ? "Done. Your Lead splitter by countries workbook download has started."
               : "Done. Your Lead Splitter workbook download has started.",
             "success",
           );
@@ -721,6 +739,7 @@
         } finally {
           leadGenerateButton.disabled = false;
           leadAffButton.disabled = false;
+          leadCountriesButton.disabled = false;
         }
       }
 
@@ -730,6 +749,10 @@
 
       leadAffButton.addEventListener("click", () => {
         void handleLeadRequest("aff");
+      });
+
+      leadCountriesButton.addEventListener("click", () => {
+        void handleLeadRequest("countries");
       });
 
       crForm.addEventListener("submit", async (event) => {
