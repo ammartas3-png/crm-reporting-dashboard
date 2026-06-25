@@ -386,6 +386,11 @@ def _share(part, whole) -> float:
     return (part / whole) if whole > 0 else 0.0
 
 
+def _aff_total_cr(leads: int, ftd: int) -> float:
+    # AFF total rows must always be strict FTD / Leads.
+    return (ftd / leads) if leads > 0 else 0.0
+
+
 def _aff_write_row(ws, row_i, col_offset, vals, font, fill, skip_fill=0) -> None:
     for j, val in enumerate(vals):
         cell = ws.cell(row=row_i, column=col_offset + j + 1, value=val)
@@ -467,7 +472,15 @@ def _write_standard_table(ws, data_df, col_offset, country_label, campaign_col, 
                 ws,
                 row_i,
                 col_offset,
-                ["", "", f"{campaign} Total", "", campaign_leads, campaign_ftd, _cr(campaign_leads, campaign_ftd)],
+                [
+                    "",
+                    "",
+                    f"{campaign} Total",
+                    "",
+                    campaign_leads,
+                    campaign_ftd,
+                    _aff_total_cr(campaign_leads, campaign_ftd),
+                ],
                 AFF_FONT_BOLD_W,
                 AFF_FILL_CAMP,
                 skip_fill=2,
@@ -480,7 +493,7 @@ def _write_standard_table(ws, data_df, col_offset, country_label, campaign_col, 
             ws,
             row_i,
             col_offset,
-            ["", f"{office} Total", "", "", office_leads, office_ftd, _cr(office_leads, office_ftd)],
+            ["", f"{office} Total", "", "", office_leads, office_ftd, _aff_total_cr(office_leads, office_ftd)],
             AFF_FONT_BOLD,
             AFF_FILL_OFFICE,
         )
@@ -492,7 +505,7 @@ def _write_standard_table(ws, data_df, col_offset, country_label, campaign_col, 
         ws,
         row_i,
         col_offset,
-        [f"{country_label} Total", "", "", "", grand_leads, grand_ftd, _cr(grand_leads, grand_ftd)],
+        [f"{country_label} Total", "", "", "", grand_leads, grand_ftd, _aff_total_cr(grand_leads, grand_ftd)],
         AFF_FONT_BOLD_W,
         AFF_FILL_GRAND,
     )
@@ -558,7 +571,16 @@ def _write_gcc_table(ws, data_df, col_offset, campaign_col, country_col, status_
                 ws,
                 row_i,
                 col_offset,
-                ["", "", f"{campaign} Total", "", "", campaign_leads, campaign_ftd, _cr(campaign_leads, campaign_ftd)],
+                [
+                    "",
+                    "",
+                    f"{campaign} Total",
+                    "",
+                    "",
+                    campaign_leads,
+                    campaign_ftd,
+                    _aff_total_cr(campaign_leads, campaign_ftd),
+                ],
                 AFF_FONT_BOLD_W,
                 AFF_FILL_CAMP,
                 skip_fill=2,
@@ -571,7 +593,7 @@ def _write_gcc_table(ws, data_df, col_offset, campaign_col, country_col, status_
             ws,
             row_i,
             col_offset,
-            ["", f"{office} Total", "", "", "", office_leads, office_ftd, _cr(office_leads, office_ftd)],
+            ["", f"{office} Total", "", "", "", office_leads, office_ftd, _aff_total_cr(office_leads, office_ftd)],
             AFF_FONT_BOLD,
             AFF_FILL_OFFICE,
         )
@@ -583,7 +605,7 @@ def _write_gcc_table(ws, data_df, col_offset, campaign_col, country_col, status_
         ws,
         row_i,
         col_offset,
-        ["GCC EN Total", "", "", "", "", grand_leads, grand_ftd, _cr(grand_leads, grand_ftd)],
+        ["GCC EN Total", "", "", "", "", grand_leads, grand_ftd, _aff_total_cr(grand_leads, grand_ftd)],
         AFF_FONT_BOLD_W,
         AFF_FILL_GRAND,
     )
