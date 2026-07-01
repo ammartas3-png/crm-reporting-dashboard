@@ -20,6 +20,78 @@ def _write_input_with_header_row_3(path: Path, headers: list[str], rows: list[li
     workbook.save(path)
 
 
+class LeadSplitterPivotCrTests(unittest.TestCase):
+    def test_pivot_agent_cr_uses_country_share_and_totals_use_ftd_ratio(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_path = root / "lead_input.xlsx"
+            output_dir = root / "out"
+
+            headers = [
+                "Ignore0",
+                "Desk",
+                "Agent",
+                "Ignore3",
+                "CID",
+                "Status",
+                "Campaign",
+                "Ignore7",
+                "Country",
+                "Ignore9",
+                "Ignore10",
+                "Ignore11",
+                "Ignore12",
+                "Assigned",
+                "FTD",
+            ]
+            rows = [
+                ["", "TR1-IN", "Agent A", "", "CID-1", "Reached", "Aff A", "", "India", "", "", "", "", "1", "0"],
+                ["", "TR1-IN", "Agent B", "", "CID-2", "Reached", "Aff A", "", "India", "", "", "", "", "1", "0"],
+                ["", "TR1-IN", "Agent B", "", "CID-3", "Reached", "Aff A", "", "India", "", "", "", "", "1", "0"],
+                ["", "TR1-IN", "Agent B", "", "CID-4", "Reached", "Aff A", "", "India", "", "", "", "", "1", "1"],
+                ["", "TR1-BD", "Agent C", "", "CID-5", "Reached", "Aff A", "", "India", "", "", "", "", "1", "0"],
+                ["", "TR1-BD", "Agent C", "", "CID-6", "Reached", "Aff A", "", "India", "", "", "", "", "1", "0"],
+            ]
+            _write_input_with_header_row_3(input_path, headers, rows)
+
+            outputs = lead_splitter.build_outputs(
+                input_path=input_path,
+                output_dir=output_dir,
+                generate_lead=True,
+                generate_aff=False,
+            )
+            lead_output = outputs["lead"]
+            workbook = load_workbook(lead_output, data_only=False)
+            sheet = workbook["Pivot"]
+
+            def _find_row(label: str, label_column: int) -> int:
+                for row_idx in range(2, sheet.max_row + 1):
+                    if str(sheet.cell(row_idx, label_column).value or "").strip() == label:
+                        return row_idx
+                self.fail(f"Could not find label '{label}' in column {label_column}.")
+
+            agent_a_row = _find_row("Agent A", 3)
+            agent_b_row = _find_row("Agent B", 3)
+            agent_c_row = _find_row("Agent C", 3)
+            country_total_row = _find_row("India Total", 2)
+            desk_total_row = _find_row("IN Total", 1)
+
+            # Agent CR = agent leads / country total leads (6 leads total for India).
+            self.assertAlmostEqual(float(sheet.cell(agent_a_row, 6).value or 0.0), 1 / 6, places=6)
+            self.assertAlmostEqual(float(sheet.cell(agent_b_row, 6).value or 0.0), 3 / 6, places=6)
+            self.assertAlmostEqual(float(sheet.cell(agent_c_row, 6).value or 0.0), 2 / 6, places=6)
+
+            # Total rows keep FTD / Leads CR.
+            self.assertAlmostEqual(float(sheet.cell(country_total_row, 6).value or 0.0), 1 / 6, places=6)
+            self.assertAlmostEqual(float(sheet.cell(desk_total_row, 6).value or 0.0), 1 / 6, places=6)
+
+            # BD desk rows are merged into IN desk (no separate BD Total).
+            for row_idx in range(2, sheet.max_row + 1):
+                desk_value = str(sheet.cell(row_idx, 1).value or "").strip()
+                self.assertNotEqual(desk_value, "BD")
+                self.assertNotEqual(desk_value, "BD Total")
+
+
 class LeadSplitterAffCrTests(unittest.TestCase):
     def test_aff_totals_use_strict_ftd_divided_by_leads(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

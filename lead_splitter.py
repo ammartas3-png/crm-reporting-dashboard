@@ -135,7 +135,10 @@ def get_desk2(desk) -> str:
     if not isinstance(desk, str):
         return str(desk)
     parts = desk.split("-")
-    return parts[1] if len(parts) >= 2 else desk
+    desk_value = parts[1] if len(parts) >= 2 else desk
+    if str(desk_value).strip().upper() == "BD":
+        return "IN"
+    return desk_value
 
 
 def get_office(desk) -> str:
@@ -179,6 +182,10 @@ def _cr(leads, ftd) -> float:
     if leads > 0:
         return ftd / leads
     return float(ftd) if ftd > 0 else 0.0
+
+
+def _share(part, whole) -> float:
+    return (part / whole) if whole > 0 else 0.0
 
 
 def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col) -> None:
@@ -227,10 +234,12 @@ def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col) -> None:
         leads: int,
         ftd: int,
         *,
+        cr_value: float | None = None,
         is_total: bool = False,
         total_fill: PatternFill | None = None,
     ) -> None:
-        cr_value = _cr(leads, ftd)
+        if cr_value is None:
+            cr_value = _cr(leads, ftd)
         values = [desk_val, country_val, agent_val, leads, ftd, cr_value]
         row_fill = total_fill if is_total and total_fill is not None else white_fill
         for offset, value in enumerate(values):
@@ -277,17 +286,20 @@ def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col) -> None:
                     by=["Assigned", "FTD", c_col],
                     ascending=[False, False, True],
                 )
+                country_assigned = int(country_df["Assigned"].sum())
                 first_country_row = True
 
                 for _, item in country_df.iterrows():
+                    agent_leads = int(item["Assigned"])
                     write_row(
                         start_col,
                         current_row,
                         desk_name if first_desk_row else "",
                         str(country) if first_country_row else "",
                         str(item[c_col]) if pd.notna(item[c_col]) else "",
-                        int(item["Assigned"]),
+                        agent_leads,
                         int(item["FTD"]),
+                        cr_value=_share(agent_leads, country_assigned),
                     )
                     first_desk_row = False
                     first_country_row = False
@@ -587,10 +599,6 @@ def _aff_write_headers(ws, col_offset, headers) -> None:
         cell.border = AFF_BORDER_DARK
         cell.alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 20
-
-
-def _share(part, whole) -> float:
-    return (part / whole) if whole > 0 else 0.0
 
 
 def _aff_total_cr(leads: int, ftd: int) -> float:
