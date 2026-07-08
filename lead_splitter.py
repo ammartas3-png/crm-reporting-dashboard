@@ -234,12 +234,10 @@ def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col) -> None:
         leads: int,
         ftd: int,
         *,
-        cr_value: float | None = None,
         is_total: bool = False,
         total_fill: PatternFill | None = None,
     ) -> None:
-        if cr_value is None:
-            cr_value = _cr(leads, ftd)
+        cr_value = _cr(leads, ftd)
         values = [desk_val, country_val, agent_val, leads, ftd, cr_value]
         row_fill = total_fill if is_total and total_fill is not None else white_fill
         for offset, value in enumerate(values):
@@ -286,20 +284,17 @@ def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col) -> None:
                     by=["Assigned", "FTD", c_col],
                     ascending=[False, False, True],
                 )
-                country_assigned = int(country_df["Assigned"].sum())
                 first_country_row = True
 
                 for _, item in country_df.iterrows():
-                    agent_leads = int(item["Assigned"])
                     write_row(
                         start_col,
                         current_row,
                         desk_name if first_desk_row else "",
                         str(country) if first_country_row else "",
                         str(item[c_col]) if pd.notna(item[c_col]) else "",
-                        agent_leads,
+                        int(item["Assigned"]),
                         int(item["FTD"]),
-                        cr_value=_share(agent_leads, country_assigned),
                     )
                     first_desk_row = False
                     first_country_row = False
