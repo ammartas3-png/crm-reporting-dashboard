@@ -1026,6 +1026,7 @@ def build_outputs(
 
         ws_data.freeze_panes = "A2"
         build_pivot(wb_new, df, n_col, o_col, b_col, c_col, i_col)
+        wb_new.move_sheet(wb_new["Pivot"], offset=-1)
         wb_new.save(lead_output_path)
         outputs["lead"] = lead_output_path
 
