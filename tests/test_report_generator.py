@@ -341,6 +341,164 @@ class ReportGeneratorTests(unittest.TestCase):
             self.assertIn("Campaign A", campaigns)
             self.assertIn("M-Inhousemedia Alpha", campaigns)
 
+    def test_build_output_files_splits_by_department_code(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            powerbi = root / "powerbi.xlsx"
+            crm = root / "crm.xlsx"
+            output = root / "My_report.xlsx"
+
+            _write_workbook(
+                powerbi,
+                POWERBI_COLUMNS,
+                [
+                    [111, "BrandA", "| first ;", 1],
+                    [222, "BrandA", "| second ;", 2],
+                    [333, "BrandA", "| third ;", 3],
+                ],
+            )
+            _write_workbook(
+                crm,
+                [*CRM_COLUMNS, "Date of Birth"],
+                [
+                    [
+                        "Lead",
+                        111,
+                        "2026-05-09",
+                        "Jane Doe",
+                        "HQ / TR1 / EN / Opening / Murat",
+                        "Potential",
+                        "TR",
+                        "Campaign A",
+                        "Sub A",
+                        "Placement A",
+                        "Agent 1",
+                        "1990-01-01",
+                    ],
+                    [
+                        "Lead",
+                        222,
+                        "2026-05-09",
+                        "John Doe",
+                        "HQ / CY1 / EN-TR / Opening / Housse",
+                        "Call Again",
+                        "CY",
+                        "Campaign B",
+                        "Sub B",
+                        "Placement B",
+                        "Agent 2",
+                        "1989-09-09",
+                    ],
+                    [
+                        "Lead",
+                        333,
+                        "2026-05-09",
+                        "Alex Doe",
+                        "Sales",
+                        "Potential",
+                        "TR",
+                        "Campaign C",
+                        "Sub C",
+                        "Placement C",
+                        "Agent 3",
+                        "1988-08-08",
+                    ],
+                ],
+            )
+
+            outputs = build_output_files(
+                powerbi_report=powerbi,
+                crm_files=[crm],
+                platforms=["BrandA"],
+                pivot_name="Status Pivot",
+                output_file=output,
+                separate_m_inhousemedia=False,
+                separate_department=True,
+            )
+
+            self.assertEqual(
+                sorted(path.name for path in outputs),
+                ["My_report_CY.xlsx", "My_report_TR.xlsx", "My_report_general.xlsx"],
+            )
+
+            workbook_tr = load_workbook(root / "My_report_TR.xlsx", data_only=False)
+            ws_tr = workbook_tr["CRM Output"]
+            department_col = PROGRAM_A_OUTPUT_COLUMNS.index("Department") + 1
+            departments = {
+                str(ws_tr.cell(row, department_col).value or "")
+                for row in range(2, ws_tr.max_row + 1)
+                if ws_tr.cell(row, department_col).value
+            }
+            self.assertEqual(departments, {"HQ / TR1 / EN / Opening / Murat"})
+
+    def test_build_output_files_splits_by_department_and_m_inhousemedia(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            powerbi = root / "powerbi.xlsx"
+            crm = root / "crm.xlsx"
+            output = root / "My_report.xlsx"
+
+            _write_workbook(
+                powerbi,
+                POWERBI_COLUMNS,
+                [
+                    [111, "BrandA", "| first ;", 1],
+                    [222, "BrandA", "| second ;", 2],
+                ],
+            )
+            _write_workbook(
+                crm,
+                [*CRM_COLUMNS, "Date of Birth"],
+                [
+                    [
+                        "Lead",
+                        111,
+                        "2026-05-09",
+                        "Jane Doe",
+                        "HQ / TR1 / EN / Opening / Murat",
+                        "Potential",
+                        "TR",
+                        "Campaign A",
+                        "Sub A",
+                        "Placement A",
+                        "Agent 1",
+                        "1990-01-01",
+                    ],
+                    [
+                        "Lead",
+                        222,
+                        "2026-05-09",
+                        "John Doe",
+                        "HQ / TR1 / EN / Opening / Murat",
+                        "Call Again",
+                        "TR",
+                        "M-Inhousemedia Alpha",
+                        "Sub B",
+                        "Placement B",
+                        "Agent 2",
+                        "1989-09-09",
+                    ],
+                ],
+            )
+
+            outputs = build_output_files(
+                powerbi_report=powerbi,
+                crm_files=[crm],
+                platforms=["BrandA"],
+                pivot_name="Status Pivot",
+                output_file=output,
+                separate_m_inhousemedia=True,
+                separate_department=True,
+            )
+
+            self.assertEqual(
+                sorted(path.name for path in outputs),
+                [
+                    "My_report_M-Inhousemedia_TR.xlsx",
+                    "My_report_general_TR.xlsx",
+                ],
+            )
+
     def test_missing_powerbi_columns_reports_file_name(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "bad_powerbi.xlsx"

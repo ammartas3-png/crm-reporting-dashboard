@@ -1445,10 +1445,14 @@ class handler(BaseHTTPRequestHandler):
                         separate_m_inhousemedia = _is_truthy(
                             _field_text(form, "separate_m_inhouse")
                         )
+                        separate_department = _is_truthy(
+                            _field_text(form, "separate_department")
+                        )
                         generated_outputs = program_a_report.build_output_files(
                             **common_args,
                             pivot_name=pivot_name,
                             separate_m_inhousemedia=separate_m_inhousemedia,
+                            separate_department=separate_department,
                         )
                         if len(generated_outputs) == 1:
                             only_output = generated_outputs[0]

@@ -172,6 +172,20 @@
             </label>
           </div>
 
+          <div id="separate-department-row" class="toggle-row">
+            <input
+              id="separate-department"
+              class="toggle-input"
+              type="checkbox"
+              name="separate_department"
+              value="1"
+            />
+            <label class="toggle-label" for="separate-department">
+              <span class="toggle-switch"></span>
+              <span class="toggle-text">Separate by department (HQ / XX)</span>
+            </label>
+          </div>
+
           <div class="actions">
             <button id="submit-button" type="submit">Generate workbook</button>
             <p id="status" role="status" aria-live="polite"></p>
@@ -378,6 +392,8 @@
       const outputHint = document.querySelector("#output-hint");
       const separateMInhouseRow = document.querySelector("#separate-m-inhouse-row");
       const separateMInhouseToggle = document.querySelector("#separate-m-inhouse");
+      const separateDepartmentRow = document.querySelector("#separate-department-row");
+      const separateDepartmentToggle = document.querySelector("#separate-department");
 
       const programConfig = {
         program_a: {
@@ -480,6 +496,8 @@
         const showSeparateMInhouse = selected === "program_a";
         separateMInhouseRow.hidden = !showSeparateMInhouse;
         separateMInhouseToggle.disabled = !showSeparateMInhouse;
+        separateDepartmentRow.hidden = !showSeparateMInhouse;
+        separateDepartmentToggle.disabled = !showSeparateMInhouse;
       }
 
       function crmRows() {

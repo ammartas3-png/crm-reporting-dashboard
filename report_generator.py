@@ -71,6 +71,7 @@ DATE_OF_BIRTH_INPUT_CANDIDATES = [
     "DoB",
 ]
 M_INHOUSEMEDIA_CAMPAIGN_PREFIX = "m-inhousemedia"
+HQ_DEPARTMENT_RE = re.compile(r"HQ\s*/\s*([A-Z]{2})", re.IGNORECASE)
 PIVOT_FILL_COLOR = "FFDBB7"
 
 STATUS_COLORS: dict[str, tuple[str, str]] = {
@@ -1033,6 +1034,62 @@ def _split_rows_by_campaign(
     return general_rows, m_inhouse_rows
 
 
+def _extract_department_code(department_value: Any) -> str | None:
+    match = HQ_DEPARTMENT_RE.search(str(department_value or "").strip())
+    if not match:
+        return None
+    return match.group(1).upper()
+
+
+def _partition_rows_for_outputs(
+    all_rows: list[dict[str, Any]],
+    *,
+    separate_m_inhousemedia: bool,
+    separate_department: bool,
+) -> list[tuple[str, list[dict[str, Any]], bool]]:
+    general_rows, m_inhouse_rows = _split_rows_by_campaign(all_rows)
+
+    campaign_groups: list[tuple[str | None, list[dict[str, Any]], bool]] = []
+    if separate_m_inhousemedia and m_inhouse_rows:
+        if general_rows:
+            campaign_groups.append(("general", general_rows, True))
+        campaign_groups.append(("M-Inhousemedia", m_inhouse_rows, False))
+    else:
+        campaign_groups.append((None, all_rows, True))
+
+    if not separate_department:
+        return [
+            (campaign_label or "", rows, include_campaign_pivot)
+            for campaign_label, rows, include_campaign_pivot in campaign_groups
+        ]
+
+    partitioned: list[tuple[str, list[dict[str, Any]], bool]] = []
+    for campaign_label, rows, include_campaign_pivot in campaign_groups:
+        by_department: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            department_code = _extract_department_code(row.get("Department", ""))
+            by_department[department_code or "general"].append(row)
+
+        for department_key in sorted(by_department.keys(), key=lambda key: (key == "general", key)):
+            department_rows = by_department[department_key]
+            if not department_rows:
+                continue
+
+            suffix_parts: list[str] = []
+            if campaign_label:
+                suffix_parts.append(campaign_label)
+            if department_key != "general":
+                suffix_parts.append(department_key)
+            elif campaign_label is None:
+                suffix_parts.append("general")
+
+            partitioned.append(
+                ("_".join(suffix_parts), department_rows, include_campaign_pivot)
+            )
+
+    return partitioned
+
+
 def build_output_files(
     powerbi_report: Path,
     crm_files: list[Path],
@@ -1042,6 +1099,7 @@ def build_output_files(
     powerbi_sheet: str | None = None,
     crm_sheet: str | None = None,
     separate_m_inhousemedia: bool = True,
+    separate_department: bool = False,
 ) -> list[Path]:
     if len(crm_files) != len(platforms):
         raise ValueError("Each CRM file must have exactly one platform name.")
@@ -1054,32 +1112,30 @@ def build_output_files(
         all_rows.extend(file_rows)
 
     all_rows.sort(key=lambda row: normalize_status(row.get("Status", "")))
-    general_rows, m_inhouse_rows = _split_rows_by_campaign(all_rows)
+    output_buckets = _partition_rows_for_outputs(
+        all_rows,
+        separate_m_inhousemedia=separate_m_inhousemedia,
+        separate_department=separate_department,
+    )
 
-    if separate_m_inhousemedia and m_inhouse_rows:
-        suffix = output_file.suffix or ".xlsx"
-        general_output = output_file.with_name(f"{output_file.stem}_general{suffix}")
-        m_inhouse_output = output_file.with_name(
-            f"{output_file.stem}_M-Inhousemedia{suffix}"
+    suffix = output_file.suffix or ".xlsx"
+    generated_outputs: list[Path] = []
+    for label, bucket_rows, include_campaign_pivot in output_buckets:
+        bucket_output = (
+            output_file
+            if not label
+            else output_file.with_name(f"{output_file.stem}_{label}{suffix}")
         )
-        write_output(general_rows, general_output, pivot_name=pivot_name, include_status_pivot=True)
         write_output(
-            m_inhouse_rows,
-            m_inhouse_output,
+            bucket_rows,
+            bucket_output,
             pivot_name=pivot_name,
             include_status_pivot=True,
-            include_campaign_pivot=False,
+            include_campaign_pivot=include_campaign_pivot,
         )
-        return [general_output, m_inhouse_output]
+        generated_outputs.append(bucket_output)
 
-    write_output(
-        all_rows,
-        output_file,
-        pivot_name=pivot_name,
-        include_status_pivot=True,
-        include_campaign_pivot=True,
-    )
-    return [output_file]
+    return generated_outputs
 
 
 def build_output(
