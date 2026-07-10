@@ -880,17 +880,33 @@ def _apply_all_borders(worksheet, total_rows: int, total_cols: int) -> None:
             cell.border = THIN_BORDER
 
 
-def write_output(
+def _sanitize_sheet_title(name: str) -> str:
+    invalid_chars = set(":\\/?*[]")
+    cleaned = "".join(character for character in name if character not in invalid_chars).strip()
+    return (cleaned or "Sheet")[:31]
+
+
+def _department_sheet_name(department_key: str) -> str:
+    return _sanitize_sheet_title(department_key)
+
+
+def _table_display_name(sheet_name: str) -> str:
+    safe_name = re.sub(r"[^0-9A-Za-z_]", "_", sheet_name)
+    if not safe_name or safe_name[0].isdigit():
+        safe_name = f"CRM_{safe_name or 'Output'}"
+    return f"CRMOutput_{safe_name}"[:255]
+
+
+def _write_output_sheet(
+    ws_data,
     rows: list[dict[str, Any]],
-    output_file: Path,
+    *,
+    sheet_name: str,
     pivot_name: str,
+    table_display_name: str,
     include_status_pivot: bool = True,
     include_campaign_pivot: bool = True,
 ) -> None:
-    workbook = Workbook()
-    ws_data = workbook.active
-    ws_data.title = "CRM Output"
-
     status_col_idx = PROGRAM_A_OUTPUT_COLUMNS.index("Status") + 1
     cb_col_idx = PROGRAM_A_OUTPUT_COLUMNS.index("CB") + 1
     comments_col_idx = PROGRAM_A_OUTPUT_COLUMNS.index("Comments") + 1
@@ -949,7 +965,10 @@ def write_output(
 
     last_col_letter = get_column_letter(len(PROGRAM_A_OUTPUT_COLUMNS))
     last_data_row = ws_data.max_row
-    table = Table(displayName="CRMOutput", ref=f"A1:{last_col_letter}{last_data_row}")
+    table = Table(
+        displayName=table_display_name,
+        ref=f"A1:{last_col_letter}{last_data_row}",
+    )
     table.tableStyleInfo = TableStyleInfo(
         name="TableStyleMedium2",
         showFirstColumn=False,
@@ -984,7 +1003,7 @@ def write_output(
             current_col,
             pivot_name,
             rows,
-            data_sheet_name="CRM Output",
+            data_sheet_name=sheet_name,
             data_first_row=2,
             data_last_row=last_data_row,
         )
@@ -995,7 +1014,7 @@ def write_output(
         current_row,
         current_col,
         rows,
-        data_sheet_name="CRM Output",
+        data_sheet_name=sheet_name,
         data_first_row=2,
         data_last_row=last_data_row,
     )
@@ -1007,9 +1026,63 @@ def write_output(
             current_row,
             current_col,
             rows,
-            data_sheet_name="CRM Output",
+            data_sheet_name=sheet_name,
             data_first_row=2,
             data_last_row=last_data_row,
+        )
+
+
+def write_output(
+    rows: list[dict[str, Any]],
+    output_file: Path,
+    pivot_name: str,
+    include_status_pivot: bool = True,
+    include_campaign_pivot: bool = True,
+) -> None:
+    workbook = Workbook()
+    ws_data = workbook.active
+    ws_data.title = "CRM Output"
+    _write_output_sheet(
+        ws_data,
+        rows,
+        sheet_name="CRM Output",
+        pivot_name=pivot_name,
+        table_display_name="CRMOutput",
+        include_status_pivot=include_status_pivot,
+        include_campaign_pivot=include_campaign_pivot,
+    )
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(output_file)
+
+
+def write_output_with_department_sheets(
+    rows: list[dict[str, Any]],
+    output_file: Path,
+    pivot_name: str,
+    include_status_pivot: bool = True,
+    include_campaign_pivot: bool = True,
+) -> None:
+    department_buckets = _split_rows_by_department(rows)
+    workbook = Workbook()
+    first_sheet = True
+
+    for department_key, department_rows in department_buckets:
+        sheet_name = _department_sheet_name(department_key)
+        if first_sheet:
+            ws_data = workbook.active
+            ws_data.title = sheet_name
+            first_sheet = False
+        else:
+            ws_data = workbook.create_sheet(sheet_name)
+
+        _write_output_sheet(
+            ws_data,
+            department_rows,
+            sheet_name=sheet_name,
+            pivot_name=pivot_name,
+            table_display_name=_table_display_name(sheet_name),
+            include_status_pivot=include_status_pivot,
+            include_campaign_pivot=include_campaign_pivot,
         )
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1041,53 +1114,39 @@ def _extract_department_code(department_value: Any) -> str | None:
     return match.group(1).upper()
 
 
+def _split_rows_by_department(
+    rows: list[dict[str, Any]],
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    by_department: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        department_code = _extract_department_code(row.get("Department", ""))
+        by_department[department_code or "general"].append(row)
+
+    return [
+        (department_key, by_department[department_key])
+        for department_key in sorted(
+            by_department.keys(),
+            key=lambda key: (key == "general", key),
+        )
+        if by_department[department_key]
+    ]
+
+
 def _partition_rows_for_outputs(
     all_rows: list[dict[str, Any]],
     *,
     separate_m_inhousemedia: bool,
-    separate_department: bool,
 ) -> list[tuple[str, list[dict[str, Any]], bool]]:
     general_rows, m_inhouse_rows = _split_rows_by_campaign(all_rows)
 
-    campaign_groups: list[tuple[str | None, list[dict[str, Any]], bool]] = []
     if separate_m_inhousemedia and m_inhouse_rows:
+        campaign_groups: list[tuple[str, list[dict[str, Any]], bool]] = []
         if general_rows:
             campaign_groups.append(("general", general_rows, True))
         campaign_groups.append(("M-Inhousemedia", m_inhouse_rows, False))
-    else:
-        campaign_groups.append((None, all_rows, True))
+        return campaign_groups
 
-    if not separate_department:
-        return [
-            (campaign_label or "", rows, include_campaign_pivot)
-            for campaign_label, rows, include_campaign_pivot in campaign_groups
-        ]
-
-    partitioned: list[tuple[str, list[dict[str, Any]], bool]] = []
-    for campaign_label, rows, include_campaign_pivot in campaign_groups:
-        by_department: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for row in rows:
-            department_code = _extract_department_code(row.get("Department", ""))
-            by_department[department_code or "general"].append(row)
-
-        for department_key in sorted(by_department.keys(), key=lambda key: (key == "general", key)):
-            department_rows = by_department[department_key]
-            if not department_rows:
-                continue
-
-            suffix_parts: list[str] = []
-            if campaign_label:
-                suffix_parts.append(campaign_label)
-            if department_key != "general":
-                suffix_parts.append(department_key)
-            elif campaign_label is None:
-                suffix_parts.append("general")
-
-            partitioned.append(
-                ("_".join(suffix_parts), department_rows, include_campaign_pivot)
-            )
-
-    return partitioned
+    return [("", all_rows, True)]
 
 
 def build_output_files(
@@ -1115,7 +1174,6 @@ def build_output_files(
     output_buckets = _partition_rows_for_outputs(
         all_rows,
         separate_m_inhousemedia=separate_m_inhousemedia,
-        separate_department=separate_department,
     )
 
     suffix = output_file.suffix or ".xlsx"
@@ -1126,13 +1184,22 @@ def build_output_files(
             if not label
             else output_file.with_name(f"{output_file.stem}_{label}{suffix}")
         )
-        write_output(
-            bucket_rows,
-            bucket_output,
-            pivot_name=pivot_name,
-            include_status_pivot=True,
-            include_campaign_pivot=include_campaign_pivot,
-        )
+        if separate_department:
+            write_output_with_department_sheets(
+                bucket_rows,
+                bucket_output,
+                pivot_name=pivot_name,
+                include_status_pivot=True,
+                include_campaign_pivot=include_campaign_pivot,
+            )
+        else:
+            write_output(
+                bucket_rows,
+                bucket_output,
+                pivot_name=pivot_name,
+                include_status_pivot=True,
+                include_campaign_pivot=include_campaign_pivot,
+            )
         generated_outputs.append(bucket_output)
 
     return generated_outputs

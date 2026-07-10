@@ -416,13 +416,12 @@ class ReportGeneratorTests(unittest.TestCase):
                 separate_department=True,
             )
 
-            self.assertEqual(
-                sorted(path.name for path in outputs),
-                ["My_report_CY.xlsx", "My_report_TR.xlsx", "My_report_general.xlsx"],
-            )
+            self.assertEqual([path.name for path in outputs], ["My_report.xlsx"])
 
-            workbook_tr = load_workbook(root / "My_report_TR.xlsx", data_only=False)
-            ws_tr = workbook_tr["CRM Output"]
+            workbook = load_workbook(root / "My_report.xlsx", data_only=False)
+            self.assertEqual(sorted(workbook.sheetnames), ["CY", "TR", "general"])
+
+            ws_tr = workbook["TR"]
             department_col = PROGRAM_A_OUTPUT_COLUMNS.index("Department") + 1
             departments = {
                 str(ws_tr.cell(row, department_col).value or "")
@@ -493,11 +492,13 @@ class ReportGeneratorTests(unittest.TestCase):
 
             self.assertEqual(
                 sorted(path.name for path in outputs),
-                [
-                    "My_report_M-Inhousemedia_TR.xlsx",
-                    "My_report_general_TR.xlsx",
-                ],
+                ["My_report_M-Inhousemedia.xlsx", "My_report_general.xlsx"],
             )
+
+            workbook_general = load_workbook(root / "My_report_general.xlsx", data_only=False)
+            workbook_inhouse = load_workbook(root / "My_report_M-Inhousemedia.xlsx", data_only=False)
+            self.assertEqual(workbook_general.sheetnames, ["TR"])
+            self.assertEqual(workbook_inhouse.sheetnames, ["TR"])
 
     def test_missing_powerbi_columns_reports_file_name(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
