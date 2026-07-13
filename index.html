@@ -200,6 +200,20 @@
             </label>
           </div>
 
+          <div id="separate-department-row" class="toggle-row">
+            <input
+              id="separate-department"
+              class="toggle-input"
+              type="checkbox"
+              name="separate_department"
+              value="1"
+            />
+            <label class="toggle-label" for="separate-department">
+              <span class="toggle-switch"></span>
+              <span class="toggle-text">Separate by departments</span>
+            </label>
+          </div>
+
           <div class="actions">
             <button id="submit-button" type="submit">Generate workbook</button>
             <p id="status" role="status" aria-live="polite"></p>
@@ -406,6 +420,8 @@
       const outputHint = document.querySelector("#output-hint");
       const separateMInhouseRow = document.querySelector("#separate-m-inhouse-row");
       const separateMInhouseToggle = document.querySelector("#separate-m-inhouse");
+      const separateDepartmentRow = document.querySelector("#separate-department-row");
+      const separateDepartmentToggle = document.querySelector("#separate-department");
       const powerbiFieldset = document.querySelector("#powerbi-fieldset");
       const powerbiReportInput = document.querySelector("#powerbi-report-input");
       const monthlyCommentsFieldset = document.querySelector("#monthly-comments-fieldset");
@@ -534,6 +550,71 @@
         const showSeparateMInhouse = isProgramA || isProgramC;
         separateMInhouseRow.hidden = !showSeparateMInhouse;
         separateMInhouseToggle.disabled = !showSeparateMInhouse;
+
+        separateDepartmentRow.hidden = false;
+        separateDepartmentToggle.disabled = false;
+      }
+
+      const LARGE_FILE_CHUNK_SIZE = 3 * 1024 * 1024;
+
+      async function uploadLargeFileInChunks(file, onProgress) {
+        const uploadId = crypto.randomUUID();
+        const totalChunks = Math.max(1, Math.ceil(file.size / LARGE_FILE_CHUNK_SIZE));
+
+        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
+          const start = chunkIndex * LARGE_FILE_CHUNK_SIZE;
+          const end = Math.min(start + LARGE_FILE_CHUNK_SIZE, file.size);
+          const chunk = file.slice(start, end);
+          const chunkForm = new FormData();
+          chunkForm.append("upload_id", uploadId);
+          chunkForm.append("chunk_index", String(chunkIndex));
+          chunkForm.append("total_chunks", String(totalChunks));
+          chunkForm.append("filename", file.name);
+          chunkForm.append("chunk", chunk, `${file.name}.part${chunkIndex}`);
+
+          const response = await fetch("/api/upload_file", {
+            method: "POST",
+            body: chunkForm,
+          });
+          if (!response.ok) {
+            throw new Error(
+              await readErrorMessage(
+                response,
+                `Failed to upload monthly comments chunk ${chunkIndex + 1} of ${totalChunks}.`,
+              ),
+            );
+          }
+
+          if (onProgress) {
+            onProgress(chunkIndex + 1, totalChunks);
+          }
+        }
+
+        return uploadId;
+      }
+
+      async function buildReportFormData() {
+        const formData = new FormData(form);
+
+        if (selectedProgram() === "program_c") {
+          const monthlyFile = monthlyCommentsInput.files[0];
+          if (!monthlyFile) {
+            throw new Error("Browse and select the monthly comments .xlsx file.");
+          }
+
+          setStatus("Uploading monthly comments file in parts...", "pending");
+          const uploadId = await uploadLargeFileInChunks(monthlyFile, (done, total) => {
+            setStatus(
+              `Uploading monthly comments file (${done}/${total})...`,
+              "pending",
+            );
+          });
+
+          formData.delete("monthly_comments_report");
+          formData.append("monthly_comments_upload_id", uploadId);
+        }
+
+        return formData;
       }
 
       function crmRows() {
@@ -642,7 +723,7 @@
         try {
           const response = await fetch("/api/generate", {
             method: "POST",
-            body: new FormData(form),
+            body: await buildReportFormData(),
           });
 
           if (!response.ok) {

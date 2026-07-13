@@ -440,6 +440,67 @@ class ReportGeneratorTests(unittest.TestCase):
                 "NA VM x2 // v3: pu/ intro/ no exp/ age 37/ hu",
             )
 
+    def test_build_output_files_splits_by_department_into_sheets(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            powerbi = root / "powerbi.xlsx"
+            crm = root / "crm.xlsx"
+            output = root / "My_report.xlsx"
+
+            _write_workbook(
+                powerbi,
+                POWERBI_COLUMNS,
+                [[111, "BrandA", "| first ;", 1], [222, "BrandA", "| second ;", 2]],
+            )
+            _write_workbook(
+                crm,
+                [*CRM_COLUMNS, "Date of Birth"],
+                [
+                    [
+                        "Lead",
+                        111,
+                        "2026-05-09",
+                        "Jane Doe",
+                        "HQ / TR1 / EN / Opening / Murat",
+                        "Potential",
+                        "TR",
+                        "Campaign A",
+                        "Sub A",
+                        "Placement A",
+                        "Agent 1",
+                        "1990-01-01",
+                    ],
+                    [
+                        "Lead",
+                        222,
+                        "2026-05-09",
+                        "John Doe",
+                        "HQ / CY1 / EN-TR / Opening / Housse",
+                        "Call Again",
+                        "CY",
+                        "Campaign B",
+                        "Sub B",
+                        "Placement B",
+                        "Agent 2",
+                        "1989-09-09",
+                    ],
+                ],
+            )
+
+            outputs = build_output_files(
+                powerbi_report=powerbi,
+                crm_files=[crm],
+                platforms=["BrandA"],
+                pivot_name="Status Pivot",
+                output_file=output,
+                separate_m_inhousemedia=False,
+                separate_department=True,
+            )
+
+            self.assertEqual([path.name for path in outputs], ["My_report.xlsx"])
+            workbook = load_workbook(root / "My_report.xlsx", data_only=False)
+            self.assertEqual(sorted(workbook.sheetnames), ["CY", "TR"])
+
     def test_missing_powerbi_columns_reports_file_name(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "bad_powerbi.xlsx"

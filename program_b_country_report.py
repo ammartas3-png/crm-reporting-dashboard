@@ -33,11 +33,14 @@ from report_generator import (
     POWERBI_COLUMNS,
     STATUS_LIST,
     STATUS_COLORS,
+    _department_sheet_name,
+    _split_rows_by_department,
     comments_for_status,
     extract_comments,
     normalize_header,
     normalize_match_value,
     normalize_status,
+    read_monthly_comments_lookup,
 )
 
 
@@ -858,20 +861,24 @@ def _sanitize_table_name(name: str, used: set[str]) -> str:
     return sanitized
 
 
-def write_output(rows: list[dict[str, Any]], output_file: Path) -> None:
-    workbook = Workbook()
-    used_sheet_names: set[str] = set()
-    used_table_names: set[str] = set()
-
+def _write_country_workbook(
+    workbook: Workbook,
+    rows: list[dict[str, Any]],
+    *,
+    used_sheet_names: set[str],
+    used_table_names: set[str],
+    main_sheet_title: str,
+    main_pivot_label: str,
+    country_sheet_prefix: str = "",
+) -> None:
     rows = sorted(rows, key=lambda row: str(row.get("Status", "") or "").strip().lower())
 
-    ws_main = workbook.active
-    ws_main.title = _sanitize_sheet_name("Main Report", used_sheet_names)
+    ws_main = workbook.create_sheet(title=_sanitize_sheet_name(main_sheet_title, used_sheet_names))
     main_pivot_info = _write_data_table_and_pivots(
         ws_main,
         rows,
-        pivot_label=MAIN_REPORT_PIVOT_LABEL,
-        table_name=_sanitize_table_name("CRMOutput_Main", used_table_names),
+        pivot_label=main_pivot_label,
+        table_name=_sanitize_table_name(f"CRMOutput_{main_sheet_title}", used_table_names),
         include_call_attempts=True,
     )
 
@@ -882,41 +889,112 @@ def write_output(rows: list[dict[str, Any]], output_file: Path) -> None:
             countries[country].append(row)
 
     for country in sorted(countries.keys(), key=str.lower):
-        sheet_name = _sanitize_sheet_name(country, used_sheet_names)
+        country_sheet_title = (
+            f"{country_sheet_prefix}{country}" if country_sheet_prefix else country
+        )
+        sheet_name = _sanitize_sheet_name(country_sheet_title, used_sheet_names)
         ws_country = workbook.create_sheet(title=sheet_name)
         _write_data_table_and_pivots(
             ws_country,
             countries[country],
             pivot_label=country,
-            table_name=_sanitize_table_name(f"CRMOutput_{country}", used_table_names),
+            table_name=_sanitize_table_name(f"CRMOutput_{country_sheet_title}", used_table_names),
             include_call_attempts=False,
             link_to_main=ws_main.title,
             country_filter=country,
             main_pivot_info=main_pivot_info,
         )
 
+
+def write_output(
+    rows: list[dict[str, Any]],
+    output_file: Path,
+    separate_department: bool = False,
+) -> None:
+    workbook = Workbook()
+    used_sheet_names: set[str] = set()
+    used_table_names: set[str] = set()
+
+    if separate_department:
+        workbook.remove(workbook.active)
+        for department_key, department_rows in _split_rows_by_department(rows):
+            department_label = _department_sheet_name(department_key)
+            _write_country_workbook(
+                workbook,
+                department_rows,
+                used_sheet_names=used_sheet_names,
+                used_table_names=used_table_names,
+                main_sheet_title=department_label,
+                main_pivot_label=(
+                    MAIN_REPORT_PIVOT_LABEL
+                    if department_key == "general"
+                    else department_label
+                ),
+                country_sheet_prefix=f"{department_label}-",
+            )
+    else:
+        ws_main = workbook.active
+        ws_main.title = _sanitize_sheet_name("Main Report", used_sheet_names)
+        main_pivot_info = _write_data_table_and_pivots(
+            ws_main,
+            sorted(rows, key=lambda row: str(row.get("Status", "") or "").strip().lower()),
+            pivot_label=MAIN_REPORT_PIVOT_LABEL,
+            table_name=_sanitize_table_name("CRMOutput_Main", used_table_names),
+            include_call_attempts=True,
+        )
+
+        countries: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            country = str(row.get("Country", "") or "").strip()
+            if country:
+                countries[country].append(row)
+
+        for country in sorted(countries.keys(), key=str.lower):
+            sheet_name = _sanitize_sheet_name(country, used_sheet_names)
+            ws_country = workbook.create_sheet(title=sheet_name)
+            _write_data_table_and_pivots(
+                ws_country,
+                countries[country],
+                pivot_label=country,
+                table_name=_sanitize_table_name(f"CRMOutput_{country}", used_table_names),
+                include_call_attempts=False,
+                link_to_main=ws_main.title,
+                country_filter=country,
+                main_pivot_info=main_pivot_info,
+            )
+
     output_file.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output_file)
 
 
 def build_output(
-    powerbi_report: Path,
     crm_files: list[Path],
     platforms: list[str],
     output_file: Path,
+    powerbi_report: Path | None = None,
+    monthly_comments_report: Path | None = None,
     powerbi_sheet: str | None = None,
     crm_sheet: str | None = None,
+    separate_department: bool = False,
 ) -> None:
     if len(crm_files) != len(platforms):
         raise ValueError("Each CRM file must have exactly one platform name.")
 
-    powerbi_lookup = read_powerbi_lookup(powerbi_report, powerbi_sheet)
+    if monthly_comments_report is not None:
+        comments_lookup = read_monthly_comments_lookup(monthly_comments_report)
+    elif powerbi_report is not None:
+        comments_lookup = read_powerbi_lookup(powerbi_report, powerbi_sheet)
+    else:
+        raise ValueError(
+            "Either powerbi_report or monthly_comments_report must be provided."
+        )
+
     all_rows: list[dict[str, Any]] = []
 
     for crm_file, platform in zip(crm_files, platforms):
-        all_rows.extend(read_crm_rows(crm_file, platform, powerbi_lookup, crm_sheet))
+        all_rows.extend(read_crm_rows(crm_file, platform, comments_lookup, crm_sheet))
 
-    write_output(all_rows, output_file)
+    write_output(all_rows, output_file, separate_department=separate_department)
 
 
 def prompt(message: str, allow_empty: bool = False) -> str:

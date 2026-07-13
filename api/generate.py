@@ -32,6 +32,7 @@ import cr_maker  # noqa: E402
 import lead_splitter  # noqa: E402
 import program_a_report  # noqa: E402
 import program_b_country_report  # noqa: E402
+from api.file_uploads import cleanup_upload, resolve_uploaded_file  # noqa: E402
 
 
 APP_REPORT = "report"
@@ -1392,12 +1393,18 @@ class handler(BaseHTTPRequestHandler):
 
                     powerbi_path: Path | None = None
                     monthly_comments_path: Path | None = None
+                    monthly_comments_upload_id = _field_text(form, "monthly_comments_upload_id")
                     if program == PROGRAM_C:
-                        monthly_comments_path = _save_upload(
-                            _field(form, "monthly_comments_report"),
-                            tmp_path,
-                            "Monthly comments report",
-                        )
+                        if monthly_comments_upload_id:
+                            monthly_comments_path = resolve_uploaded_file(
+                                monthly_comments_upload_id
+                            )
+                        else:
+                            monthly_comments_path = _save_upload(
+                                _field(form, "monthly_comments_report"),
+                                tmp_path,
+                                "Monthly comments report",
+                            )
                     else:
                         powerbi_path = _save_upload(
                             _field(form, "powerbi_report"),
@@ -1450,8 +1457,12 @@ class handler(BaseHTTPRequestHandler):
                         common_args["powerbi_report"] = powerbi_path
                     if monthly_comments_path is not None:
                         common_args["monthly_comments_report"] = monthly_comments_path
+                    separate_department = _is_truthy(_field_text(form, "separate_department"))
                     if program == PROGRAM_B:
-                        program_b_country_report.build_output(**common_args)
+                        program_b_country_report.build_output(
+                            **common_args,
+                            separate_department=separate_department,
+                        )
                         response_bytes = output_path.read_bytes()
                         response_content_type = XLSX_CONTENT_TYPE
                     else:
@@ -1462,6 +1473,7 @@ class handler(BaseHTTPRequestHandler):
                             **common_args,
                             pivot_name=pivot_name,
                             separate_m_inhousemedia=separate_m_inhousemedia,
+                            separate_department=separate_department,
                         )
                         if len(generated_outputs) == 1:
                             only_output = generated_outputs[0]
@@ -1472,6 +1484,8 @@ class handler(BaseHTTPRequestHandler):
                             response_filename = f"{output_path.stem}_reports.zip"
                             response_bytes = _zip_files(generated_outputs)
                             response_content_type = "application/zip"
+                    if monthly_comments_upload_id:
+                        cleanup_upload(monthly_comments_upload_id)
                 elif app == APP_LEAD_SPLITTER:
                     lead_input = _save_upload(
                         _field(form, "lead_input"),
