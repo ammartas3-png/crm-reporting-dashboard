@@ -40,8 +40,10 @@ APP_CR = "cr"
 APP_DATABASE_CHECK = "database_check"
 PROGRAM_A = "program_a"
 PROGRAM_B = "program_b"
+PROGRAM_C = "program_c"
 PROGRAM_A_OUTPUT_FILENAME = "crm_powerbi_output.xlsx"
 PROGRAM_B_OUTPUT_FILENAME = "crm_country_report.xlsx"
+PROGRAM_C_OUTPUT_FILENAME = "crm_monthly_comments_output.xlsx"
 MAX_UPLOAD_BYTES = 45 * 1024 * 1024
 XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 DATABASE_CHECK_WEBHOOK_URL = os.environ.get(
@@ -284,8 +286,8 @@ def _app_from_form(form: cgi.FieldStorage) -> str:
 
 def _program_from_form(form: cgi.FieldStorage) -> str:
     program = _field_text(form, "program") or PROGRAM_A
-    if program not in {PROGRAM_A, PROGRAM_B}:
-        raise ValueError("Please select Program A or Program B.")
+    if program not in {PROGRAM_A, PROGRAM_B, PROGRAM_C}:
+        raise ValueError("Please select a report program.")
     return program
 
 
@@ -1376,8 +1378,8 @@ class handler(BaseHTTPRequestHandler):
                 if app == APP_REPORT:
                     program = _program_from_form(form)
                     pivot_name = _field_text(form, "pivot_name")
-                    if program == PROGRAM_A and not pivot_name:
-                        raise ValueError("Pivot table name is required for Program A.")
+                    if program in {PROGRAM_A, PROGRAM_C} and not pivot_name:
+                        raise ValueError("Pivot table name is required for this report program.")
 
                     crm_count_raw = _field_text(form, "crm_count")
                     try:
@@ -1388,11 +1390,20 @@ class handler(BaseHTTPRequestHandler):
                     if crm_count < 1:
                         raise ValueError("At least one CRM file is required.")
 
-                    powerbi_path = _save_upload(
-                        _field(form, "powerbi_report"),
-                        tmp_path,
-                        "PowerBI report",
-                    )
+                    powerbi_path: Path | None = None
+                    monthly_comments_path: Path | None = None
+                    if program == PROGRAM_C:
+                        monthly_comments_path = _save_upload(
+                            _field(form, "monthly_comments_report"),
+                            tmp_path,
+                            "Monthly comments report",
+                        )
+                    else:
+                        powerbi_path = _save_upload(
+                            _field(form, "powerbi_report"),
+                            tmp_path,
+                            "PowerBI report",
+                        )
 
                     crm_files: list[Path] = []
                     platforms: list[str] = []
@@ -1419,24 +1430,26 @@ class handler(BaseHTTPRequestHandler):
                     if not crm_files:
                         raise ValueError("Please upload at least one CRM file.")
 
-                    default_output = (
-                        PROGRAM_B_OUTPUT_FILENAME
-                        if program == PROGRAM_B
-                        else PROGRAM_A_OUTPUT_FILENAME
-                    )
+                    default_output = {
+                        PROGRAM_B: PROGRAM_B_OUTPUT_FILENAME,
+                        PROGRAM_C: PROGRAM_C_OUTPUT_FILENAME,
+                    }.get(program, PROGRAM_A_OUTPUT_FILENAME)
                     response_filename = _output_filename(
                         _field_text(form, "output_file"),
                         default_output,
                     )
                     output_path = tmp_path / response_filename
                     common_args = {
-                        "powerbi_report": powerbi_path,
                         "crm_files": crm_files,
                         "platforms": platforms,
                         "output_file": output_path,
                         "powerbi_sheet": _optional_text(form, "powerbi_sheet"),
                         "crm_sheet": _optional_text(form, "crm_sheet"),
                     }
+                    if powerbi_path is not None:
+                        common_args["powerbi_report"] = powerbi_path
+                    if monthly_comments_path is not None:
+                        common_args["monthly_comments_report"] = monthly_comments_path
                     if program == PROGRAM_B:
                         program_b_country_report.build_output(**common_args)
                         response_bytes = output_path.read_bytes()

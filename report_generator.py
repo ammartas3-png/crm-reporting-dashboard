@@ -40,6 +40,16 @@ POWERBI_COLUMNS = [
     "Voip Calls Attempts Cnt",
 ]
 
+MONTHLY_COMMENT_COLUMN_ALIASES: dict[str, list[str]] = {
+    "CID": ["cid", "account no", "id"],
+    "Call Attempts": ["call attempts", "voip calls attempts cnt"],
+    "Comments": ["comments", "all comments", "last 10 comments"],
+}
+
+MONTHLY_COMMENT_LINE_RE = re.compile(
+    r"^\s*(?:\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\s*\|\s*)?(.*?)\s*;?\s*$"
+)
+
 OUTPUT_COLUMNS = [
     "Platform",
     "Customer Type",
@@ -186,6 +196,36 @@ def extract_comments(last_10_comments: Any) -> list[str]:
     return comments
 
 
+def extract_monthly_comments(comments_value: Any) -> list[str]:
+    if comments_value is None:
+        return []
+
+    powerbi_style_comments = extract_comments(comments_value)
+    if powerbi_style_comments:
+        return powerbi_style_comments
+
+    parsed: list[str] = []
+    for line in str(comments_value).splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        match = MONTHLY_COMMENT_LINE_RE.match(line)
+        if match:
+            cleaned = clean_comment(match.group(1))
+            if cleaned:
+                parsed.append(cleaned)
+            continue
+
+        if "|" in line:
+            cleaned = clean_comment(line.split("|", 1)[1].strip().rstrip(";"))
+            if cleaned:
+                parsed.append(cleaned)
+
+    parsed.reverse()
+    return parsed
+
+
 def _is_na_like(text: str) -> bool:
     return bool(NA_LIKE_PATTERN.match(text.strip()))
 
@@ -326,6 +366,74 @@ def read_powerbi_lookup(
             "Comments": extract_comments(row[indexes["Last 10 Comments"]]),
             "Call Attempts": row[indexes["Voip Calls Attempts Cnt"]],
         }
+
+    return lookup
+
+
+def _monthly_header_indexes(
+    headers: Iterable[Any],
+    path: Path,
+    sheet_name: str,
+) -> dict[str, int]:
+    normalized_headers = {normalize_header(header): i for i, header in enumerate(headers)}
+    indexes: dict[str, int] = {}
+    missing: list[str] = []
+
+    for column, aliases in MONTHLY_COMMENT_COLUMN_ALIASES.items():
+        matched_index = next(
+            (normalized_headers[alias] for alias in aliases if alias in normalized_headers),
+            None,
+        )
+        if matched_index is None:
+            missing.append(column)
+        else:
+            indexes[column] = matched_index
+
+    if missing:
+        raise ValueError(
+            f"{path.name} sheet {sheet_name!r} is missing required columns: "
+            + ", ".join(missing)
+        )
+    return indexes
+
+
+def read_monthly_comments_lookup(
+    monthly_report: Path,
+) -> dict[tuple[str, str], dict[str, Any]]:
+    workbook = load_workbook(monthly_report, data_only=True)
+    lookup: dict[tuple[str, str], dict[str, Any]] = {}
+
+    for sheet_name in workbook.sheetnames:
+        platform_key = normalize_match_value(sheet_name)
+        if not platform_key:
+            continue
+
+        worksheet = workbook[sheet_name]
+        rows = worksheet.iter_rows(values_only=True)
+        try:
+            headers = next(rows)
+        except StopIteration:
+            continue
+
+        indexes = _monthly_header_indexes(headers, monthly_report, sheet_name)
+
+        for row in rows:
+            if all(value is None for value in row):
+                continue
+
+            cid_key = normalize_match_value(row[indexes["CID"]])
+            if not cid_key:
+                continue
+
+            comments_raw = row[indexes["Comments"]]
+            call_attempts = row[indexes["Call Attempts"]]
+            if call_attempts in (None, ""):
+                call_attempts = 1
+
+            lookup[(cid_key, platform_key)] = {
+                "Comments": extract_monthly_comments(comments_raw),
+                "Call Attempts": call_attempts,
+            }
 
     return lookup
 
@@ -1034,11 +1142,12 @@ def _split_rows_by_campaign(
 
 
 def build_output_files(
-    powerbi_report: Path,
     crm_files: list[Path],
     platforms: list[str],
     pivot_name: str,
     output_file: Path,
+    powerbi_report: Path | None = None,
+    monthly_comments_report: Path | None = None,
     powerbi_sheet: str | None = None,
     crm_sheet: str | None = None,
     separate_m_inhousemedia: bool = True,
@@ -1046,11 +1155,19 @@ def build_output_files(
     if len(crm_files) != len(platforms):
         raise ValueError("Each CRM file must have exactly one platform name.")
 
-    powerbi_lookup = read_powerbi_lookup(powerbi_report, powerbi_sheet)
+    if monthly_comments_report is not None:
+        comments_lookup = read_monthly_comments_lookup(monthly_comments_report)
+    elif powerbi_report is not None:
+        comments_lookup = read_powerbi_lookup(powerbi_report, powerbi_sheet)
+    else:
+        raise ValueError(
+            "Either powerbi_report or monthly_comments_report must be provided."
+        )
+
     all_rows: list[dict[str, Any]] = []
 
     for crm_file, platform in zip(crm_files, platforms):
-        file_rows = read_crm_rows(crm_file, platform, powerbi_lookup, crm_sheet)
+        file_rows = read_crm_rows(crm_file, platform, comments_lookup, crm_sheet)
         all_rows.extend(file_rows)
 
     all_rows.sort(key=lambda row: normalize_status(row.get("Status", "")))

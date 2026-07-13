@@ -14,6 +14,7 @@ from report_generator import (
     PROGRAM_A_OUTPUT_COLUMNS,
     build_output_files,
     build_output,
+    extract_monthly_comments,
     read_powerbi_lookup,
 )
 
@@ -24,6 +25,20 @@ def _write_workbook(path: Path, headers: list[str], rows: list[list[object]]) ->
     worksheet.append(headers)
     for row in rows:
         worksheet.append(row)
+    workbook.save(path)
+
+
+def _write_multi_sheet_workbook(
+    path: Path,
+    sheets: dict[str, tuple[list[str], list[list[object]]]],
+) -> None:
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    for sheet_name, (headers, rows) in sheets.items():
+        worksheet = workbook.create_sheet(sheet_name)
+        worksheet.append(headers)
+        for row in rows:
+            worksheet.append(row)
     workbook.save(path)
 
 
@@ -340,6 +355,90 @@ class ReportGeneratorTests(unittest.TestCase):
             ]
             self.assertIn("Campaign A", campaigns)
             self.assertIn("M-Inhousemedia Alpha", campaigns)
+
+    def test_extract_monthly_comments_strips_timestamp_and_semicolon(self) -> None:
+        raw = (
+            "2026-07-02 14:13 | v3: pu/ intro/ no exp/ age 37/ hu;\n"
+            "2026-07-03 10:00 | NA;\n"
+            "2026-07-04 11:00 | VM;"
+        )
+        comments = extract_monthly_comments(raw)
+        self.assertEqual(
+            comments,
+            [
+                "VM",
+                "NA",
+                "v3: pu/ intro/ no exp/ age 37/ hu",
+            ],
+        )
+
+    def test_build_output_files_uses_monthly_comments_lookup(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            monthly = root / "monthly_comments.xlsx"
+            crm = root / "crm.xlsx"
+            output = root / "output.xlsx"
+
+            _write_multi_sheet_workbook(
+                monthly,
+                {
+                    "BrandA": (
+                        ["CID", "Call Attempts", "Comments"],
+                        [
+                            [
+                                123,
+                                13,
+                                (
+                                    "2026-07-02 14:13 | v3: pu/ intro/ no exp/ age 37/ hu;\n"
+                                    "2026-07-03 10:00 | NA;\n"
+                                    "2026-07-04 11:00 | VM;\n"
+                                    "2026-07-05 12:00 | Potential;"
+                                ),
+                            ],
+                        ],
+                    ),
+                },
+            )
+            _write_workbook(
+                crm,
+                [*CRM_COLUMNS, "Date of Birth"],
+                [
+                    [
+                        "Lead",
+                        123,
+                        "2026-05-09",
+                        "Jane Doe",
+                        "Sales",
+                        "Call Again",
+                        "TR",
+                        "Campaign A",
+                        "Sub A",
+                        "Placement A",
+                        "Agent 1",
+                        "1990-01-01",
+                    ],
+                ],
+            )
+
+            outputs = build_output_files(
+                monthly_comments_report=monthly,
+                crm_files=[crm],
+                platforms=["BrandA"],
+                pivot_name="Status Pivot",
+                output_file=output,
+            )
+            self.assertEqual([path.name for path in outputs], ["output.xlsx"])
+
+            workbook = load_workbook(root / "output.xlsx", data_only=False)
+            ws = workbook["CRM Output"]
+            comments_col = PROGRAM_A_OUTPUT_COLUMNS.index("Comments") + 1
+            attempts_col = PROGRAM_A_OUTPUT_COLUMNS.index("Call Attempts") + 1
+
+            self.assertEqual(ws.cell(2, attempts_col).value, 13)
+            self.assertEqual(
+                ws.cell(2, comments_col).value,
+                "NA VM x2 // v3: pu/ intro/ no exp/ age 37/ hu",
+            )
 
     def test_missing_powerbi_columns_reports_file_name(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

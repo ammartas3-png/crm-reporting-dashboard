@@ -66,20 +66,48 @@
                   </small>
                 </span>
               </label>
+
+              <label class="program-card">
+                <input type="radio" name="program" value="program_c" />
+                <span>
+                  <strong>Monthly all comments</strong>
+                  <small>
+                    Monthly reports which need all the comments
+                  </small>
+                </span>
+              </label>
             </div>
           </fieldset>
 
-          <fieldset>
+          <fieldset id="powerbi-fieldset">
             <legend>PowerBI report</legend>
             <label>
               Browse PowerBI .xlsx file
               <input
+                id="powerbi-report-input"
                 type="file"
                 name="powerbi_report"
                 accept=".xlsx"
                 required
               />
             </label>
+          </fieldset>
+
+          <fieldset id="monthly-comments-fieldset" hidden>
+            <legend>Monthly comments file</legend>
+            <label>
+              Browse monthly comments .xlsx file
+              <input
+                id="monthly-comments-input"
+                type="file"
+                name="monthly_comments_report"
+                accept=".xlsx"
+              />
+            </label>
+            <p class="section-note">
+              Upload the workbook with one sheet per platform. Each sheet must
+              include CID, Call Attempts, and Comments columns.
+            </p>
           </fieldset>
 
           <fieldset id="pivot-fieldset">
@@ -378,6 +406,10 @@
       const outputHint = document.querySelector("#output-hint");
       const separateMInhouseRow = document.querySelector("#separate-m-inhouse-row");
       const separateMInhouseToggle = document.querySelector("#separate-m-inhouse");
+      const powerbiFieldset = document.querySelector("#powerbi-fieldset");
+      const powerbiReportInput = document.querySelector("#powerbi-report-input");
+      const monthlyCommentsFieldset = document.querySelector("#monthly-comments-fieldset");
+      const monthlyCommentsInput = document.querySelector("#monthly-comments-input");
 
       const programConfig = {
         program_a: {
@@ -397,6 +429,15 @@
             "Bulk Country Reports uses fixed workbook labels: Main Report uses M-Inhousemedia and country sheets use country names.",
           outputHint:
             "Choose a name for your file or leave the field blank for crm_country_report.xlsx.",
+        },
+        program_c: {
+          output: "crm_monthly_comments_output.xlsx",
+          fallbackDownload: "crm_monthly_comments_output.xlsx",
+          pivotRequired: true,
+          pivotHint:
+            "Choose the name of the Status pivot table included in the report sheet",
+          outputHint:
+            "Choose a name for your file or leave the field blank for crm_monthly_comments_output.xlsx.",
         },
       };
 
@@ -477,7 +518,20 @@
         pivotHint.textContent = config.pivotHint;
         outputFile.placeholder = config.output;
         outputHint.textContent = config.outputHint;
-        const showSeparateMInhouse = selected === "program_a";
+        const isProgramA = selected === "program_a";
+        const isProgramC = selected === "program_c";
+        const usesPowerBi = selected !== "program_c";
+        const usesMonthlyComments = isProgramC;
+
+        powerbiFieldset.hidden = !usesPowerBi;
+        powerbiReportInput.required = usesPowerBi;
+        powerbiReportInput.disabled = !usesPowerBi;
+
+        monthlyCommentsFieldset.hidden = !usesMonthlyComments;
+        monthlyCommentsInput.required = usesMonthlyComments;
+        monthlyCommentsInput.disabled = !usesMonthlyComments;
+
+        const showSeparateMInhouse = isProgramA || isProgramC;
         separateMInhouseRow.hidden = !showSeparateMInhouse;
         separateMInhouseToggle.disabled = !showSeparateMInhouse;
       }
