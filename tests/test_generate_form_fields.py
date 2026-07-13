@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+import zipfile
 from email.message import Message
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import Mock
 
 import cgi
@@ -12,31 +15,53 @@ import cgi
 from api import generate
 
 
-def _multipart_form(fields: dict[str, str]) -> cgi.FieldStorage:
+def _multipart_form(
+    fields: dict[str, str],
+    files: list[tuple[str, str, bytes]] | None = None,
+) -> cgi.FieldStorage:
     boundary = "----WebKitFormBoundaryTest"
-    parts: list[str] = []
+    body = BytesIO()
     for name, value in fields.items():
-        parts.append(
-            f"--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
-            f"{value}\r\n"
+        body.write(
+            (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
+                f"{value}\r\n"
+            ).encode("utf-8")
         )
-    parts.append(f"--{boundary}--\r\n")
-    body = "".join(parts).encode("utf-8")
+    for name, filename, data in files or []:
+        body.write(
+            (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
+                "Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n"
+            ).encode("utf-8")
+        )
+        body.write(data)
+        body.write(b"\r\n")
+    body.write(f"--{boundary}--\r\n".encode("utf-8"))
+    payload = body.getvalue()
     content_type = f"multipart/form-data; boundary={boundary}"
     headers = Message()
     headers["content-type"] = content_type
-    headers["content-length"] = str(len(body))
+    headers["content-length"] = str(len(payload))
     return cgi.FieldStorage(
-        fp=BytesIO(body),
+        fp=BytesIO(payload),
         headers=headers,
         environ={
             "REQUEST_METHOD": "POST",
             "CONTENT_TYPE": content_type,
-            "CONTENT_LENGTH": str(len(body)),
+            "CONTENT_LENGTH": str(len(payload)),
         },
         keep_blank_values=True,
     )
+
+
+def _minimal_xlsx() -> bytes:
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("[Content_Types].xml", '<?xml version="1.0"?><Types></Types>')
+    return buffer.getvalue()
 
 
 class GenerateFormFieldTests(unittest.TestCase):
@@ -95,6 +120,27 @@ class GenerateFormFieldTests(unittest.TestCase):
         handler = Mock(path="/api/generate?program=program_c", headers={})
         program = generate._resolve_report_program(handler, form, "", {})
         self.assertEqual(program, generate.PROGRAM_C)
+
+    def test_discover_crm_indices_finds_uploaded_files(self) -> None:
+        form = _multipart_form(
+            {"platform_0": "Fintana"},
+            [("crm_file_0", "ZA July.xlsx", _minimal_xlsx())],
+        )
+        self.assertEqual(generate._discover_crm_indices(form), [0])
+
+    def test_collect_crm_uploads_works_without_crm_count_field(self) -> None:
+        form = _multipart_form(
+            {"platform_0": "Fintana"},
+            [("crm_file_0", "ZA July.xlsx", _minimal_xlsx())],
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            crm_files, platforms = generate._collect_crm_uploads(
+                form,
+                Path(temp_dir),
+            )
+            self.assertEqual(len(crm_files), 1)
+            self.assertEqual(platforms, ["Fintana"])
+            self.assertTrue(crm_files[0].exists())
 
 
 if __name__ == "__main__":

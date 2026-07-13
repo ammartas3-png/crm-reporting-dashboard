@@ -33,6 +33,7 @@ def save_chunk(
     *,
     pivot_name: str | None = None,
     program: str | None = None,
+    crm_count: str | None = None,
 ) -> Path | None:
     if total_chunks < 1:
         raise ValueError("total_chunks must be at least 1.")
@@ -57,6 +58,8 @@ def save_chunk(
         meta["pivot_name"] = pivot_name
     if program:
         meta["program"] = program
+    if crm_count:
+        meta["crm_count"] = crm_count
     meta_path.write_text(json.dumps(meta), encoding="utf-8")
 
     if all((workspace / f"chunk_{index}").exists() for index in range(total_chunks)):
@@ -90,7 +93,7 @@ def read_upload_metadata(upload_id: str) -> dict[str, str]:
     return {
         key: str(value).strip()
         for key, value in meta.items()
-        if key in {"pivot_name", "program", "filename", "total_chunks"} and value
+        if key in {"pivot_name", "program", "crm_count", "filename", "total_chunks"} and value
     }
 
 

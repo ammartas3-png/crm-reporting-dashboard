@@ -99,6 +99,7 @@ class handler(BaseHTTPRequestHandler):
                 chunk_bytes,
                 pivot_name=_field_text(form, "pivot_name") or None,
                 program=_field_text(form, "program") or None,
+                crm_count=_field_text(form, "crm_count") or None,
             )
             response = {
                 "ok": True,

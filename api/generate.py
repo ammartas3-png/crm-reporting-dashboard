@@ -338,6 +338,50 @@ def _resolve_pivot_name(
     return ""
 
 
+def _discover_crm_indices(form: cgi.FieldStorage) -> list[int]:
+    indices: set[int] = set()
+    for key in form.keys():
+        match = re.fullmatch(r"crm_file_(\d+)", str(key))
+        if match:
+            indices.add(int(match.group(1)))
+    return sorted(indices)
+
+
+def _collect_crm_uploads(
+    form: cgi.FieldStorage,
+    directory: Path,
+) -> tuple[list[Path], list[str]]:
+    indices = _discover_crm_indices(form)
+    if not indices:
+        raise ValueError("At least one CRM file is required.")
+
+    crm_files: list[Path] = []
+    platforms: list[str] = []
+    for index in indices:
+        crm_field = _field(form, f"crm_file_{index}")
+        platform = _field_text(form, f"platform_{index}")
+        has_upload = _has_upload(crm_field)
+        if not has_upload and not platform:
+            continue
+        if not has_upload:
+            raise ValueError(f"Please upload CRM file #{index + 1}.")
+        if not platform:
+            raise ValueError(
+                f"Platform name for CRM file #{index + 1} is required."
+            )
+        crm_path = _save_upload(
+            crm_field,
+            directory,
+            f"CRM file #{index + 1}",
+        )
+        crm_files.append(crm_path)
+        platforms.append(platform)
+
+    if not crm_files:
+        raise ValueError("At least one CRM file is required.")
+    return crm_files, platforms
+
+
 def _optional_text(form: cgi.FieldStorage, name: str) -> str | None:
     value = _field_text(form, name)
     return value or None
@@ -1432,7 +1476,7 @@ class handler(BaseHTTPRequestHandler):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Report-Pivot-Name, X-Report-Program")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Report-Pivot-Name, X-Report-Program, X-Report-Crm-Count")
         self.end_headers()
 
     def do_POST(self) -> None:
@@ -1474,15 +1518,6 @@ class handler(BaseHTTPRequestHandler):
                     if program in {PROGRAM_A, PROGRAM_C} and not pivot_name:
                         raise ValueError("Pivot table name is required for this report program.")
 
-                    crm_count_raw = _field_text(form, "crm_count")
-                    try:
-                        crm_count = int(crm_count_raw)
-                    except ValueError as exc:
-                        raise ValueError("At least one CRM file is required.") from exc
-
-                    if crm_count < 1:
-                        raise ValueError("At least one CRM file is required.")
-
                     powerbi_path: Path | None = None
                     monthly_comments_path: Path | None = None
                     if program == PROGRAM_C:
@@ -1503,30 +1538,7 @@ class handler(BaseHTTPRequestHandler):
                             "PowerBI report",
                         )
 
-                    crm_files: list[Path] = []
-                    platforms: list[str] = []
-                    for index in range(crm_count):
-                        crm_field = _field(form, f"crm_file_{index}")
-                        platform = _field_text(form, f"platform_{index}")
-                        has_upload = _has_upload(crm_field)
-                        if not has_upload and not platform:
-                            continue
-                        if not has_upload:
-                            raise ValueError(f"Please upload CRM file #{index + 1}.")
-                        if not platform:
-                            raise ValueError(
-                                f"Platform name for CRM file #{index + 1} is required."
-                            )
-                        crm_path = _save_upload(
-                            crm_field,
-                            tmp_path,
-                            f"CRM file #{index + 1}",
-                        )
-                        crm_files.append(crm_path)
-                        platforms.append(platform)
-
-                    if not crm_files:
-                        raise ValueError("Please upload at least one CRM file.")
+                    crm_files, platforms = _collect_crm_uploads(form, tmp_path)
 
                     default_output = {
                         PROGRAM_B: PROGRAM_B_OUTPUT_FILENAME,

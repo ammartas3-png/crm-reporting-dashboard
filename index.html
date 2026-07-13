@@ -591,6 +591,9 @@
           if (metadata.program) {
             chunkForm.append("program", metadata.program);
           }
+          if (metadata.crmCount) {
+            chunkForm.append("crm_count", metadata.crmCount);
+          }
           chunkForm.append("chunk", chunk, `${file.name}.part${chunkIndex}`);
 
           const response = await fetch("/api/upload_file", {
@@ -614,14 +617,53 @@
         return uploadId;
       }
 
+      function collectCrmEntries() {
+        const entries = [];
+        crmRows().forEach((row) => {
+          const fileInput = row.querySelector(".crm-file-input");
+          const platformInput = row.querySelector(".platform-input");
+          const crmFile = fileInput.files[0];
+          const platform = platformInput.value.trim();
+          if (!crmFile && !platform) {
+            return;
+          }
+          entries.push({ crmFile, platform, fileInput, platformInput });
+        });
+        return entries;
+      }
+
       async function buildReportFormData() {
         syncPivotToForm();
         const program = selectedProgram();
         const pivotValue = pivotName.value.trim();
+        const crmEntries = collectCrmEntries();
 
         if ((program === "program_a" || program === "program_c") && !pivotValue) {
           pivotName.focus();
           throw new Error("Pivot table name is required for this report program.");
+        }
+
+        if (!crmEntries.length) {
+          throw new Error("At least one CRM file is required.");
+        }
+
+        for (const [index, entry] of crmEntries.entries()) {
+          entry.fileInput.setCustomValidity("");
+          entry.platformInput.setCustomValidity("");
+          if (!entry.crmFile) {
+            entry.fileInput.setCustomValidity(
+              `Browse and select CRM file #${index + 1}.`,
+            );
+            entry.fileInput.reportValidity();
+            throw new Error(`CRM file #${index + 1} is required.`);
+          }
+          if (!entry.platform) {
+            entry.platformInput.setCustomValidity(
+              `Select the platform for CRM file #${index + 1}.`,
+            );
+            entry.platformInput.reportValidity();
+            throw new Error(`Platform name for CRM file #${index + 1} is required.`);
+          }
         }
 
         let monthlyUploadId = "";
@@ -641,7 +683,7 @@
                 "pending",
               );
             },
-            { pivotName: pivotValue, program },
+            { pivotName: pivotValue, program, crmCount: String(crmEntries.length) },
           );
         }
 
@@ -649,17 +691,11 @@
         formData.append("app", "report");
         formData.append("program", program);
         formData.append("pivot_name", pivotValue);
-        formData.append("crm_count", String(crmRows().length));
+        formData.append("crm_count", String(crmEntries.length));
 
-        crmRows().forEach((row, index) => {
-          const fileInput = row.querySelector(".crm-file-input");
-          const platformInput = row.querySelector(".platform-input");
-          const crmFile = fileInput.files[0];
-          if (!crmFile) {
-            return;
-          }
-          formData.append(`crm_file_${index}`, crmFile, crmFile.name);
-          formData.append(`platform_${index}`, platformInput.value.trim());
+        crmEntries.forEach((entry, index) => {
+          formData.append(`crm_file_${index}`, entry.crmFile, entry.crmFile.name);
+          formData.append(`platform_${index}`, entry.platform);
         });
 
         const outputValue = outputFile.value.trim();
@@ -681,13 +717,14 @@
         appendCheckedToggle(formData, separateMInhouseToggle);
         appendCheckedToggle(formData, separateDepartmentToggle);
 
-        return { formData, program, pivotValue };
+        return { formData, program, pivotValue, crmCount: crmEntries.length };
       }
 
-      function buildGenerateRequestHeaders(program, pivotValue) {
+      function buildGenerateRequestHeaders(program, pivotValue, crmCount) {
         return {
           "X-Report-Program": program,
           "X-Report-Pivot-Name": encodeURIComponent(pivotValue),
+          "X-Report-Crm-Count": String(crmCount),
         };
       }
 
@@ -731,7 +768,6 @@
       }
 
       function validateCrmRows() {
-        let uploadedCount = 0;
         const rows = crmRows();
 
         rows.forEach((row) => {
@@ -742,10 +778,6 @@
 
           fileInput.setCustomValidity("");
           platformInput.setCustomValidity("");
-
-          if (hasFile) {
-            uploadedCount += 1;
-          }
 
           if (hasFile && !hasPlatform) {
             platformInput.setCustomValidity(
@@ -760,10 +792,11 @@
           }
         });
 
-        if (uploadedCount === 0 && rows.length > 0) {
+        const uploadedEntries = collectCrmEntries().filter((entry) => entry.crmFile);
+        if (!uploadedEntries.length && rows.length > 0) {
           rows[0]
             .querySelector(".crm-file-input")
-            .setCustomValidity("Browse and select at least one CRM .xlsx file.");
+            .setCustomValidity("At least one CRM file is required.");
         }
       }
 
@@ -798,13 +831,14 @@
         setStatus("Uploading files and generating workbook...", "pending");
 
         try {
-          const { formData, program, pivotValue } = await buildReportFormData();
+          const { formData, program, pivotValue, crmCount } = await buildReportFormData();
           const generateUrl = new URL("/api/generate", window.location.href);
           generateUrl.searchParams.set("program", program);
           generateUrl.searchParams.set("pivot_name", pivotValue);
+          generateUrl.searchParams.set("crm_count", String(crmCount));
           const response = await fetch(generateUrl, {
             method: "POST",
-            headers: buildGenerateRequestHeaders(program, pivotValue),
+            headers: buildGenerateRequestHeaders(program, pivotValue, crmCount),
             body: formData,
           });
 
