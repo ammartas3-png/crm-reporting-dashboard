@@ -40,6 +40,16 @@ POWERBI_COLUMNS = [
     "Voip Calls Attempts Cnt",
 ]
 
+MONTHLY_COMMENT_COLUMN_ALIASES: dict[str, list[str]] = {
+    "CID": ["cid", "account no", "id"],
+    "Call Attempts": ["call attempts", "voip calls attempts cnt"],
+    "Comments": ["comments", "all comments", "last 10 comments"],
+}
+
+MONTHLY_COMMENT_LINE_RE = re.compile(
+    r"^\s*(?:\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\s*\|\s*)?(.*?)\s*;?\s*$"
+)
+
 OUTPUT_COLUMNS = [
     "Platform",
     "Customer Type",
@@ -57,6 +67,22 @@ OUTPUT_COLUMNS = [
     "Comments",
     "Call Attempts",
 ]
+
+DATE_OF_BIRTH_OUTPUT_COLUMN = "Date of birth"
+PROGRAM_A_OUTPUT_COLUMNS = (
+    OUTPUT_COLUMNS[: OUTPUT_COLUMNS.index("Comments")]
+    + [DATE_OF_BIRTH_OUTPUT_COLUMN]
+    + OUTPUT_COLUMNS[OUTPUT_COLUMNS.index("Comments") :]
+)
+DATE_OF_BIRTH_INPUT_CANDIDATES = [
+    "Date of Birth",
+    "Date of birth",
+    "DOB",
+    "DoB",
+]
+M_INHOUSEMEDIA_CAMPAIGN_PREFIX = "m-inhousemedia"
+HQ_DEPARTMENT_RE = re.compile(r"HQ\s*/\s*([A-Z]{2})", re.IGNORECASE)
+PIVOT_FILL_COLOR = "FFDBB7"
 
 STATUS_COLORS: dict[str, tuple[str, str]] = {
     "call again": ("FFFF00", "000000"),
@@ -96,6 +122,7 @@ STATUS_LIST: list[str] = sorted(
         "Decline",
         "Denied Registration",
         "Duplicate",
+        "Invalid Country",
         "No Answer 1-5",
         "No Answer 5 up",
         "No Interest",
@@ -123,6 +150,7 @@ STATUS_COMMENT_RE = re.compile(
     r"|no potential\s*[-–]\s*no documents"
     r"|not interested|no interest"
     r"|in progress"
+    r"|invalid country"
     r"|potential|recall|under 18|wrong number or email"
     r")$",
     re.IGNORECASE,
@@ -167,6 +195,36 @@ def extract_comments(last_10_comments: Any) -> list[str]:
     comments = [comment for comment in comments if comment]
     comments.reverse()
     return comments
+
+
+def extract_monthly_comments(comments_value: Any) -> list[str]:
+    if comments_value is None:
+        return []
+
+    powerbi_style_comments = extract_comments(comments_value)
+    if powerbi_style_comments:
+        return powerbi_style_comments
+
+    parsed: list[str] = []
+    for line in str(comments_value).splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        match = MONTHLY_COMMENT_LINE_RE.match(line)
+        if match:
+            cleaned = clean_comment(match.group(1))
+            if cleaned:
+                parsed.append(cleaned)
+            continue
+
+        if "|" in line:
+            cleaned = clean_comment(line.split("|", 1)[1].strip().rstrip(";"))
+            if cleaned:
+                parsed.append(cleaned)
+
+    parsed.reverse()
+    return parsed
 
 
 def _is_na_like(text: str) -> bool:
@@ -259,19 +317,41 @@ def header_indexes(
     }
 
 
+def powerbi_header_indexes_and_rows(worksheet, path: Path):
+    """Return PowerBI column indexes and an iterator positioned after the header.
+
+    Most PowerBI exports have headers on row 1. Some exports include filter/info
+    rows first, with the actual table headers on row 3. Try row 1 first; when it
+    does not contain the required PowerBI columns, skip row 2 and try row 3.
+    """
+    rows = worksheet.iter_rows(values_only=True)
+
+    try:
+        first_row = next(rows)
+    except StopIteration as exc:
+        raise ValueError(f"{path.name} is empty") from exc
+
+    try:
+        return header_indexes(first_row, POWERBI_COLUMNS, path), rows
+    except ValueError as first_row_error:
+        try:
+            next(rows)
+            third_row = next(rows)
+        except StopIteration as exc:
+            raise first_row_error from exc
+
+        try:
+            return header_indexes(third_row, POWERBI_COLUMNS, path), rows
+        except ValueError as exc:
+            raise first_row_error from exc
+
+
 def read_powerbi_lookup(
     powerbi_report: Path,
     sheet_name: str | None = None,
 ) -> dict[tuple[str, str], dict[str, Any]]:
     worksheet = worksheet_from_file(powerbi_report, sheet_name)
-    rows = worksheet.iter_rows(values_only=True)
-
-    try:
-        headers = next(rows)
-    except StopIteration as exc:
-        raise ValueError(f"{powerbi_report.name} is empty") from exc
-
-    indexes = header_indexes(headers, POWERBI_COLUMNS, powerbi_report)
+    indexes, rows = powerbi_header_indexes_and_rows(worksheet, powerbi_report)
     lookup: dict[tuple[str, str], dict[str, Any]] = {}
 
     for row in rows:
@@ -291,6 +371,74 @@ def read_powerbi_lookup(
     return lookup
 
 
+def _monthly_header_indexes(
+    headers: Iterable[Any],
+    path: Path,
+    sheet_name: str,
+) -> dict[str, int]:
+    normalized_headers = {normalize_header(header): i for i, header in enumerate(headers)}
+    indexes: dict[str, int] = {}
+    missing: list[str] = []
+
+    for column, aliases in MONTHLY_COMMENT_COLUMN_ALIASES.items():
+        matched_index = next(
+            (normalized_headers[alias] for alias in aliases if alias in normalized_headers),
+            None,
+        )
+        if matched_index is None:
+            missing.append(column)
+        else:
+            indexes[column] = matched_index
+
+    if missing:
+        raise ValueError(
+            f"{path.name} sheet {sheet_name!r} is missing required columns: "
+            + ", ".join(missing)
+        )
+    return indexes
+
+
+def read_monthly_comments_lookup(
+    monthly_report: Path,
+) -> dict[tuple[str, str], dict[str, Any]]:
+    workbook = load_workbook(monthly_report, data_only=True)
+    lookup: dict[tuple[str, str], dict[str, Any]] = {}
+
+    for sheet_name in workbook.sheetnames:
+        platform_key = normalize_match_value(sheet_name)
+        if not platform_key:
+            continue
+
+        worksheet = workbook[sheet_name]
+        rows = worksheet.iter_rows(values_only=True)
+        try:
+            headers = next(rows)
+        except StopIteration:
+            continue
+
+        indexes = _monthly_header_indexes(headers, monthly_report, sheet_name)
+
+        for row in rows:
+            if all(value is None for value in row):
+                continue
+
+            cid_key = normalize_match_value(row[indexes["CID"]])
+            if not cid_key:
+                continue
+
+            comments_raw = row[indexes["Comments"]]
+            call_attempts = row[indexes["Call Attempts"]]
+            if call_attempts in (None, ""):
+                call_attempts = 1
+
+            lookup[(cid_key, platform_key)] = {
+                "Comments": extract_monthly_comments(comments_raw),
+                "Call Attempts": call_attempts,
+            }
+
+    return lookup
+
+
 def read_crm_rows(
     crm_file: Path,
     platform: str,
@@ -306,6 +454,13 @@ def read_crm_rows(
         raise ValueError(f"{crm_file.name} is empty") from exc
 
     indexes = header_indexes(headers, CRM_COLUMNS, crm_file)
+    normalized_headers = {normalize_header(header): i for i, header in enumerate(headers)}
+    date_of_birth_index = None
+    for candidate in DATE_OF_BIRTH_INPUT_CANDIDATES:
+        candidate_key = normalize_header(candidate)
+        if candidate_key in normalized_headers:
+            date_of_birth_index = normalized_headers[candidate_key]
+            break
     platform_key = normalize_match_value(platform)
     output_rows: list[dict[str, Any]] = []
 
@@ -314,6 +469,7 @@ def read_crm_rows(
             continue
 
         crm_values = {column: row[indexes[column]] for column in CRM_COLUMNS}
+        date_of_birth = row[date_of_birth_index] if date_of_birth_index is not None else ""
 
         customer_type_norm = normalize_status(crm_values.get("Customer Type", ""))
         if customer_type_norm == "depositor":
@@ -323,6 +479,7 @@ def read_crm_rows(
                     "Platform": platform,
                     **crm_values,
                     "CB": None,
+                    DATE_OF_BIRTH_OUTPUT_COLUMN: date_of_birth,
                     "Comments": "",
                     "_comments_yellow": False,
                     "Call Attempts": 1,
@@ -353,6 +510,7 @@ def read_crm_rows(
                 "Platform": platform,
                 **crm_values,
                 "CB": cb_value,
+                DATE_OF_BIRTH_OUTPUT_COLUMN: date_of_birth,
                 "Comments": comment_text,
                 "_comments_yellow": use_yellow,
                 "Call Attempts": call_attempts,
@@ -384,6 +542,8 @@ def _write_pivot_status(
     data_sheet_name: str = "CRM Output",
     filter_country: str | None = None,
     main_sheet_name: str | None = None,
+    data_first_row: int = 2,
+    data_last_row: int | None = None,
 ) -> int:
     del rows
     label_col = start_col
@@ -392,12 +552,17 @@ def _write_pivot_status(
     pct_col = start_col + 3
 
     ref_sheet = main_sheet_name if (filter_country and main_sheet_name) else data_sheet_name
-    status_letter = get_column_letter(OUTPUT_COLUMNS.index("Status") + 1)
-    status_range = f"'{ref_sheet}'!{status_letter}:{status_letter}"
+    status_letter = get_column_letter(PROGRAM_A_OUTPUT_COLUMNS.index("Status") + 1)
+    if data_last_row is None or data_last_row < data_first_row:
+        data_last_row = data_first_row
+    status_range = f"'{ref_sheet}'!${status_letter}${data_first_row}:${status_letter}${data_last_row}"
 
     if filter_country and main_sheet_name:
-        country_letter = get_column_letter(OUTPUT_COLUMNS.index("Country") + 1)
-        country_range = f"'{main_sheet_name}'!{country_letter}:{country_letter}"
+        country_letter = get_column_letter(PROGRAM_A_OUTPUT_COLUMNS.index("Country") + 1)
+        country_range = (
+            f"'{main_sheet_name}'!${country_letter}${data_first_row}:"
+            f"${country_letter}${data_last_row}"
+        )
         safe_country = filter_country.replace('"', '""')
 
     n = len(STATUS_LIST)
@@ -410,7 +575,7 @@ def _write_pivot_status(
     name_cell = ws.cell(row=start_row, column=label_col, value=pivot_name)
     name_cell.font = Font(bold=True, name="Arial", size=11)
     name_cell.alignment = Alignment(horizontal="center", vertical="center")
-    name_cell.fill = PatternFill("solid", start_color="F4B942", fgColor="F4B942")
+    name_cell.fill = PatternFill("solid", start_color=PIVOT_FILL_COLOR, fgColor=PIVOT_FILL_COLOR)
     if n > 1:
         ws.merge_cells(
             start_row=start_row,
@@ -462,7 +627,11 @@ def _write_pivot_status(
     gt_label.alignment = Alignment(horizontal="center", vertical="center")
     gt_status.font = Font(bold=True, name="Arial")
     gt_status.alignment = Alignment(horizontal="center", vertical="center")
-    gt_status.fill = PatternFill("solid", start_color="F4B942", fgColor="F4B942")
+    gt_status.fill = PatternFill(
+        "solid",
+        start_color=PIVOT_FILL_COLOR,
+        fgColor=PIVOT_FILL_COLOR,
+    )
 
     ws.merge_cells(
         start_row=total_row,
@@ -473,7 +642,11 @@ def _write_pivot_status(
     for cell in (gt_count, gt_pct):
         cell.font = Font(bold=True, name="Arial")
         cell.alignment = Alignment(horizontal="center", vertical="center")
-        cell.fill = PatternFill("solid", start_color="F4B942", fgColor="F4B942")
+        cell.fill = PatternFill(
+            "solid",
+            start_color=PIVOT_FILL_COLOR,
+            fgColor=PIVOT_FILL_COLOR,
+        )
 
     for row_num in range(start_row, total_row + 1):
         for col_num in range(label_col, pct_col + 1):
@@ -496,6 +669,8 @@ def _write_pivot_call_attempts(
     data_sheet_name: str = "CRM Output",
     filter_country: str | None = None,
     main_sheet_name: str | None = None,
+    data_first_row: int = 2,
+    data_last_row: int | None = None,
 ) -> int:
     del rows
     bucket_order = ["1", "2", "3", "4", "5+"]
@@ -506,12 +681,17 @@ def _write_pivot_call_attempts(
     pct_col = start_col + 3
 
     ref_sheet = main_sheet_name if (filter_country and main_sheet_name) else data_sheet_name
-    ca_letter = get_column_letter(OUTPUT_COLUMNS.index("Call Attempts") + 1)
-    ca_range = f"'{ref_sheet}'!{ca_letter}:{ca_letter}"
+    ca_letter = get_column_letter(PROGRAM_A_OUTPUT_COLUMNS.index("Call Attempts") + 1)
+    if data_last_row is None or data_last_row < data_first_row:
+        data_last_row = data_first_row
+    ca_range = f"'{ref_sheet}'!${ca_letter}${data_first_row}:${ca_letter}${data_last_row}"
 
     if filter_country and main_sheet_name:
-        country_letter = get_column_letter(OUTPUT_COLUMNS.index("Country") + 1)
-        country_range = f"'{main_sheet_name}'!{country_letter}:{country_letter}"
+        country_letter = get_column_letter(PROGRAM_A_OUTPUT_COLUMNS.index("Country") + 1)
+        country_range = (
+            f"'{main_sheet_name}'!${country_letter}${data_first_row}:"
+            f"${country_letter}${data_last_row}"
+        )
         safe_country = filter_country.replace('"', '""')
 
     count_col_letter = get_column_letter(count_col)
@@ -524,7 +704,7 @@ def _write_pivot_call_attempts(
     name_cell = ws.cell(row=start_row, column=label_col, value="Call Attempts")
     name_cell.font = Font(bold=True, name="Arial", size=11)
     name_cell.alignment = Alignment(horizontal="center", vertical="center")
-    name_cell.fill = PatternFill("solid", start_color="F4B942", fgColor="F4B942")
+    name_cell.fill = PatternFill("solid", start_color=PIVOT_FILL_COLOR, fgColor=PIVOT_FILL_COLOR)
     if n > 1:
         ws.merge_cells(
             start_row=start_row,
@@ -576,7 +756,11 @@ def _write_pivot_call_attempts(
     gt_label.alignment = Alignment(horizontal="center", vertical="center")
     gt_bucket.font = Font(bold=True, name="Arial")
     gt_bucket.alignment = Alignment(horizontal="center", vertical="center")
-    gt_bucket.fill = PatternFill("solid", start_color="F4B942", fgColor="F4B942")
+    gt_bucket.fill = PatternFill(
+        "solid",
+        start_color=PIVOT_FILL_COLOR,
+        fgColor=PIVOT_FILL_COLOR,
+    )
 
     ws.merge_cells(
         start_row=total_row,
@@ -587,7 +771,11 @@ def _write_pivot_call_attempts(
     for cell in (gt_count, gt_pct):
         cell.font = Font(bold=True, name="Arial")
         cell.alignment = Alignment(horizontal="center", vertical="center")
-        cell.fill = PatternFill("solid", start_color="F4B942", fgColor="F4B942")
+        cell.fill = PatternFill(
+            "solid",
+            start_color=PIVOT_FILL_COLOR,
+            fgColor=PIVOT_FILL_COLOR,
+        )
 
     for row_num in range(start_row, total_row + 1):
         for col_num in range(label_col, pct_col + 1):
@@ -610,6 +798,8 @@ def _write_pivot_campaigns(
     data_sheet_name: str = "CRM Output",
     filter_country: str | None = None,
     main_sheet_name: str | None = None,
+    data_first_row: int = 2,
+    data_last_row: int | None = None,
 ) -> int:
     campaign_data: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for row in rows:
@@ -628,15 +818,23 @@ def _write_pivot_campaigns(
     pct_col = start_col + 2
 
     ref_sheet = main_sheet_name if (filter_country and main_sheet_name) else data_sheet_name
-    status_letter = get_column_letter(OUTPUT_COLUMNS.index("Status") + 1)
-    campaign_letter = get_column_letter(OUTPUT_COLUMNS.index("Campaign") + 1)
-    status_range = f"'{ref_sheet}'!{status_letter}:{status_letter}"
-    campaign_range = f"'{ref_sheet}'!{campaign_letter}:{campaign_letter}"
+    status_letter = get_column_letter(PROGRAM_A_OUTPUT_COLUMNS.index("Status") + 1)
+    campaign_letter = get_column_letter(PROGRAM_A_OUTPUT_COLUMNS.index("Campaign") + 1)
+    if data_last_row is None or data_last_row < data_first_row:
+        data_last_row = data_first_row
+    status_range = (
+        f"'{ref_sheet}'!${status_letter}${data_first_row}:${status_letter}${data_last_row}"
+    )
+    campaign_range = (
+        f"'{ref_sheet}'!${campaign_letter}${data_first_row}:${campaign_letter}${data_last_row}"
+    )
     count_col_letter = get_column_letter(count_col)
 
     if filter_country and main_sheet_name:
-        country_letter = get_column_letter(OUTPUT_COLUMNS.index("Country") + 1)
-        country_range = f"'{ref_sheet}'!{country_letter}:{country_letter}"
+        country_letter = get_column_letter(PROGRAM_A_OUTPUT_COLUMNS.index("Country") + 1)
+        country_range = (
+            f"'{ref_sheet}'!${country_letter}${data_first_row}:${country_letter}${data_last_row}"
+        )
         safe_country = filter_country.replace('"', '""')
 
     n = len(STATUS_LIST)
@@ -653,7 +851,11 @@ def _write_pivot_campaigns(
         header_cell = ws.cell(row=header_start, column=status_col, value=campaign)
         header_cell.font = Font(bold=True, name="Arial", size=12)
         header_cell.alignment = Alignment(horizontal="center", vertical="center")
-        header_cell.fill = PatternFill("solid", start_color="F4B942", fgColor="F4B942")
+        header_cell.fill = PatternFill(
+            "solid",
+            start_color=PIVOT_FILL_COLOR,
+            fgColor=PIVOT_FILL_COLOR,
+        )
         ws.merge_cells(
             start_row=header_start,
             start_column=status_col,
@@ -716,7 +918,11 @@ def _write_pivot_campaigns(
         gt_label = ws.cell(row=campaign_total_row, column=status_col, value="Total")
         gt_label.font = Font(bold=True, name="Arial")
         gt_label.alignment = Alignment(horizontal="center", vertical="center")
-        gt_label.fill = PatternFill("solid", start_color="F4B942", fgColor="F4B942")
+        gt_label.fill = PatternFill(
+            "solid",
+            start_color=PIVOT_FILL_COLOR,
+            fgColor=PIVOT_FILL_COLOR,
+        )
 
         gt_count = ws.cell(
             row=campaign_total_row,
@@ -733,7 +939,11 @@ def _write_pivot_campaigns(
         for cell in (gt_count, gt_pct):
             cell.font = Font(bold=True, name="Arial")
             cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.fill = PatternFill("solid", start_color="F4B942", fgColor="F4B942")
+            cell.fill = PatternFill(
+                "solid",
+                start_color=PIVOT_FILL_COLOR,
+                fgColor=PIVOT_FILL_COLOR,
+            )
 
         for row_num in range(first_count_row, campaign_total_row + 1):
             for col_num in range(status_col, pct_col + 1):
@@ -778,28 +988,46 @@ def _apply_all_borders(worksheet, total_rows: int, total_cols: int) -> None:
             cell.border = THIN_BORDER
 
 
-def write_output(
+def _sanitize_sheet_title(name: str) -> str:
+    invalid_chars = set(":\\/?*[]")
+    cleaned = "".join(character for character in name if character not in invalid_chars).strip()
+    return (cleaned or "Sheet")[:31]
+
+
+def _department_sheet_name(department_key: str) -> str:
+    return _sanitize_sheet_title(department_key)
+
+
+def _table_display_name(sheet_name: str) -> str:
+    safe_name = re.sub(r"[^0-9A-Za-z_]", "_", sheet_name)
+    if not safe_name or safe_name[0].isdigit():
+        safe_name = f"CRM_{safe_name or 'Output'}"
+    return f"CRMOutput_{safe_name}"[:255]
+
+
+def _write_output_sheet(
+    ws_data,
     rows: list[dict[str, Any]],
-    output_file: Path,
+    *,
+    sheet_name: str,
     pivot_name: str,
+    table_display_name: str,
+    include_status_pivot: bool = True,
+    include_campaign_pivot: bool = True,
 ) -> None:
-    workbook = Workbook()
-    ws_data = workbook.active
-    ws_data.title = "CRM Output"
+    status_col_idx = PROGRAM_A_OUTPUT_COLUMNS.index("Status") + 1
+    cb_col_idx = PROGRAM_A_OUTPUT_COLUMNS.index("CB") + 1
+    comments_col_idx = PROGRAM_A_OUTPUT_COLUMNS.index("Comments") + 1
 
-    status_col_idx = OUTPUT_COLUMNS.index("Status") + 1
-    cb_col_idx = OUTPUT_COLUMNS.index("CB") + 1
-    comments_col_idx = OUTPUT_COLUMNS.index("Comments") + 1
-
-    ws_data.append(OUTPUT_COLUMNS)
+    ws_data.append(PROGRAM_A_OUTPUT_COLUMNS)
     for cell in ws_data[1]:
         cell.font = Font(bold=True, name="Arial")
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
     for row in rows:
-        data = [row.get(column, "") for column in OUTPUT_COLUMNS]
+        data = [row.get(column, "") for column in PROGRAM_A_OUTPUT_COLUMNS]
 
-        cb_index = OUTPUT_COLUMNS.index("CB")
+        cb_index = PROGRAM_A_OUTPUT_COLUMNS.index("CB")
         if data[cb_index] is None:
             data[cb_index] = ""
 
@@ -830,7 +1058,7 @@ def write_output(
         if row.get("_comments_yellow"):
             comments_cell.fill = _make_fill("FFFF00")
 
-        for col_idx in range(1, len(OUTPUT_COLUMNS) + 1):
+        for col_idx in range(1, len(PROGRAM_A_OUTPUT_COLUMNS) + 1):
             cell = ws_data.cell(row=excel_row, column=col_idx)
             if col_idx != comments_col_idx:
                 cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -841,11 +1069,14 @@ def write_output(
             )
             cell.font = Font(name="Arial", color=rgb, bold=cell.font.bold)
 
-    _apply_all_borders(ws_data, ws_data.max_row, len(OUTPUT_COLUMNS))
+    _apply_all_borders(ws_data, ws_data.max_row, len(PROGRAM_A_OUTPUT_COLUMNS))
 
-    last_col_letter = get_column_letter(len(OUTPUT_COLUMNS))
+    last_col_letter = get_column_letter(len(PROGRAM_A_OUTPUT_COLUMNS))
     last_data_row = ws_data.max_row
-    table = Table(displayName="CRMOutput", ref=f"A1:{last_col_letter}{last_data_row}")
+    table = Table(
+        displayName=table_display_name,
+        ref=f"A1:{last_col_letter}{last_data_row}",
+    )
     table.tableStyleInfo = TableStyleInfo(
         name="TableStyleMedium2",
         showFirstColumn=False,
@@ -865,52 +1096,230 @@ def write_output(
     current_row = pivot_start_row
     current_col = 1
 
-    ws_data.column_dimensions["A"].width = max(
-        ws_data.column_dimensions["A"].width,
-        20,
-    )
-    ws_data.column_dimensions["B"].width = max(
-        ws_data.column_dimensions["B"].width,
-        32,
-    )
-    ws_data.column_dimensions["C"].width = max(
-        ws_data.column_dimensions["C"].width,
-        10,
-    )
-    ws_data.column_dimensions["D"].width = max(
-        ws_data.column_dimensions["D"].width,
-        10,
-    )
+    pivot_min_widths = [20, 32, 10, 10]
+    for offset, min_width in enumerate(pivot_min_widths):
+        col_letter = get_column_letter(current_col + offset)
+        ws_data.column_dimensions[col_letter].width = max(
+            ws_data.column_dimensions[col_letter].width or 0,
+            min_width,
+        )
 
-    current_row = _write_pivot_status(
-        ws_data,
-        current_row,
-        current_col,
-        pivot_name,
-        rows,
-        data_sheet_name="CRM Output",
-    )
-    current_row += 1
+    if include_status_pivot:
+        current_row = _write_pivot_status(
+            ws_data,
+            current_row,
+            current_col,
+            pivot_name,
+            rows,
+            data_sheet_name=sheet_name,
+            data_first_row=2,
+            data_last_row=last_data_row,
+        )
+        current_row += 1
 
     current_row = _write_pivot_call_attempts(
         ws_data,
         current_row,
         current_col,
         rows,
-        data_sheet_name="CRM Output",
+        data_sheet_name=sheet_name,
+        data_first_row=2,
+        data_last_row=last_data_row,
     )
-    current_row += 3
 
-    _write_pivot_campaigns(
+    if include_campaign_pivot:
+        current_row += 3
+        _write_pivot_campaigns(
+            ws_data,
+            current_row,
+            current_col,
+            rows,
+            data_sheet_name=sheet_name,
+            data_first_row=2,
+            data_last_row=last_data_row,
+        )
+
+
+def write_output(
+    rows: list[dict[str, Any]],
+    output_file: Path,
+    pivot_name: str,
+    include_status_pivot: bool = True,
+    include_campaign_pivot: bool = True,
+) -> None:
+    workbook = Workbook()
+    ws_data = workbook.active
+    ws_data.title = "CRM Output"
+    _write_output_sheet(
         ws_data,
-        current_row,
-        current_col,
         rows,
-        data_sheet_name="CRM Output",
+        sheet_name="CRM Output",
+        pivot_name=pivot_name,
+        table_display_name="CRMOutput",
+        include_status_pivot=include_status_pivot,
+        include_campaign_pivot=include_campaign_pivot,
     )
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(output_file)
+
+
+def write_output_with_department_sheets(
+    rows: list[dict[str, Any]],
+    output_file: Path,
+    pivot_name: str,
+    include_status_pivot: bool = True,
+    include_campaign_pivot: bool = True,
+) -> None:
+    department_buckets = _split_rows_by_department(rows)
+    workbook = Workbook()
+    first_sheet = True
+
+    for department_key, department_rows in department_buckets:
+        sheet_name = _department_sheet_name(department_key)
+        if first_sheet:
+            ws_data = workbook.active
+            ws_data.title = sheet_name
+            first_sheet = False
+        else:
+            ws_data = workbook.create_sheet(sheet_name)
+
+        _write_output_sheet(
+            ws_data,
+            department_rows,
+            sheet_name=sheet_name,
+            pivot_name=pivot_name,
+            table_display_name=_table_display_name(sheet_name),
+            include_status_pivot=include_status_pivot,
+            include_campaign_pivot=include_campaign_pivot,
+        )
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output_file)
+
+
+def _is_m_inhousemedia_campaign(campaign_value: Any) -> bool:
+    campaign = normalize_status(campaign_value)
+    return campaign.startswith(M_INHOUSEMEDIA_CAMPAIGN_PREFIX)
+
+
+def _split_rows_by_campaign(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    general_rows: list[dict[str, Any]] = []
+    m_inhouse_rows: list[dict[str, Any]] = []
+    for row in rows:
+        if _is_m_inhousemedia_campaign(row.get("Campaign", "")):
+            m_inhouse_rows.append(row)
+        else:
+            general_rows.append(row)
+    return general_rows, m_inhouse_rows
+
+
+def _extract_department_code(department_value: Any) -> str | None:
+    match = HQ_DEPARTMENT_RE.search(str(department_value or "").strip())
+    if not match:
+        return None
+    return match.group(1).upper()
+
+
+def _split_rows_by_department(
+    rows: list[dict[str, Any]],
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    by_department: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        department_code = _extract_department_code(row.get("Department", ""))
+        by_department[department_code or "general"].append(row)
+
+    return [
+        (department_key, by_department[department_key])
+        for department_key in sorted(
+            by_department.keys(),
+            key=lambda key: (key == "general", key),
+        )
+        if by_department[department_key]
+    ]
+
+
+def _partition_rows_for_outputs(
+    all_rows: list[dict[str, Any]],
+    *,
+    separate_m_inhousemedia: bool,
+) -> list[tuple[str, list[dict[str, Any]], bool]]:
+    general_rows, m_inhouse_rows = _split_rows_by_campaign(all_rows)
+
+    if separate_m_inhousemedia and m_inhouse_rows:
+        campaign_groups: list[tuple[str, list[dict[str, Any]], bool]] = []
+        if general_rows:
+            campaign_groups.append(("general", general_rows, True))
+        campaign_groups.append(("M-Inhousemedia", m_inhouse_rows, False))
+        return campaign_groups
+
+    return [("", all_rows, True)]
+
+
+def build_output_files(
+    crm_files: list[Path],
+    platforms: list[str],
+    pivot_name: str,
+    output_file: Path,
+    powerbi_report: Path | None = None,
+    monthly_comments_report: Path | None = None,
+    powerbi_sheet: str | None = None,
+    crm_sheet: str | None = None,
+    separate_m_inhousemedia: bool = True,
+    separate_department: bool = False,
+) -> list[Path]:
+    if len(crm_files) != len(platforms):
+        raise ValueError("Each CRM file must have exactly one platform name.")
+
+    if monthly_comments_report is not None:
+        comments_lookup = read_monthly_comments_lookup(monthly_comments_report)
+    elif powerbi_report is not None:
+        comments_lookup = read_powerbi_lookup(powerbi_report, powerbi_sheet)
+    else:
+        raise ValueError(
+            "Either powerbi_report or monthly_comments_report must be provided."
+        )
+
+    all_rows: list[dict[str, Any]] = []
+
+    for crm_file, platform in zip(crm_files, platforms):
+        file_rows = read_crm_rows(crm_file, platform, comments_lookup, crm_sheet)
+        all_rows.extend(file_rows)
+
+    all_rows.sort(key=lambda row: normalize_status(row.get("Status", "")))
+    output_buckets = _partition_rows_for_outputs(
+        all_rows,
+        separate_m_inhousemedia=separate_m_inhousemedia,
+    )
+
+    suffix = output_file.suffix or ".xlsx"
+    generated_outputs: list[Path] = []
+    for label, bucket_rows, include_campaign_pivot in output_buckets:
+        bucket_output = (
+            output_file
+            if not label
+            else output_file.with_name(f"{output_file.stem}_{label}{suffix}")
+        )
+        if separate_department:
+            write_output_with_department_sheets(
+                bucket_rows,
+                bucket_output,
+                pivot_name=pivot_name,
+                include_status_pivot=True,
+                include_campaign_pivot=include_campaign_pivot,
+            )
+        else:
+            write_output(
+                bucket_rows,
+                bucket_output,
+                pivot_name=pivot_name,
+                include_status_pivot=True,
+                include_campaign_pivot=include_campaign_pivot,
+            )
+        generated_outputs.append(bucket_output)
+
+    return generated_outputs
 
 
 def build_output(
@@ -922,17 +1331,16 @@ def build_output(
     powerbi_sheet: str | None = None,
     crm_sheet: str | None = None,
 ) -> None:
-    if len(crm_files) != len(platforms):
-        raise ValueError("Each CRM file must have exactly one platform name.")
-
-    powerbi_lookup = read_powerbi_lookup(powerbi_report, powerbi_sheet)
-    all_rows: list[dict[str, Any]] = []
-
-    for crm_file, platform in zip(crm_files, platforms):
-        file_rows = read_crm_rows(crm_file, platform, powerbi_lookup, crm_sheet)
-        all_rows.extend(file_rows)
-
-    write_output(all_rows, output_file, pivot_name=pivot_name)
+    build_output_files(
+        powerbi_report=powerbi_report,
+        crm_files=crm_files,
+        platforms=platforms,
+        pivot_name=pivot_name,
+        output_file=output_file,
+        powerbi_sheet=powerbi_sheet,
+        crm_sheet=crm_sheet,
+        separate_m_inhousemedia=True,
+    )
 
 
 def prompt(message: str, allow_empty: bool = False) -> str:
