@@ -97,6 +97,8 @@ class handler(BaseHTTPRequestHandler):
                 total_chunks,
                 filename,
                 chunk_bytes,
+                pivot_name=_field_text(form, "pivot_name") or None,
+                program=_field_text(form, "program") or None,
             )
             response = {
                 "ok": True,

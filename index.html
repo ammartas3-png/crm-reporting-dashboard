@@ -572,7 +572,7 @@
 
       const LARGE_FILE_CHUNK_SIZE = 3 * 1024 * 1024;
 
-      async function uploadLargeFileInChunks(file, onProgress) {
+      async function uploadLargeFileInChunks(file, onProgress, metadata = {}) {
         const uploadId = crypto.randomUUID();
         const totalChunks = Math.max(1, Math.ceil(file.size / LARGE_FILE_CHUNK_SIZE));
 
@@ -585,6 +585,12 @@
           chunkForm.append("chunk_index", String(chunkIndex));
           chunkForm.append("total_chunks", String(totalChunks));
           chunkForm.append("filename", file.name);
+          if (metadata.pivotName) {
+            chunkForm.append("pivot_name", metadata.pivotName);
+          }
+          if (metadata.program) {
+            chunkForm.append("program", metadata.program);
+          }
           chunkForm.append("chunk", chunk, `${file.name}.part${chunkIndex}`);
 
           const response = await fetch("/api/upload_file", {
@@ -627,12 +633,16 @@
           }
 
           setStatus("Uploading monthly comments file in parts...", "pending");
-          monthlyUploadId = await uploadLargeFileInChunks(monthlyFile, (done, total) => {
-            setStatus(
-              `Uploading monthly comments file (${done}/${total})...`,
-              "pending",
-            );
-          });
+          monthlyUploadId = await uploadLargeFileInChunks(
+            monthlyFile,
+            (done, total) => {
+              setStatus(
+                `Uploading monthly comments file (${done}/${total})...`,
+                "pending",
+              );
+            },
+            { pivotName: pivotValue, program },
+          );
         }
 
         const formData = new FormData();
@@ -674,13 +684,11 @@
         return { formData, program, pivotValue };
       }
 
-      function buildGenerateUrl(program, pivotValue) {
-        const url = new URL("/api/generate", window.location.href);
-        url.searchParams.set("program", program);
-        if (pivotValue) {
-          url.searchParams.set("pivot_name", pivotValue);
-        }
-        return url;
+      function buildGenerateRequestHeaders(program, pivotValue) {
+        return {
+          "X-Report-Program": program,
+          "X-Report-Pivot-Name": encodeURIComponent(pivotValue),
+        };
       }
 
       function crmRows() {
@@ -791,8 +799,12 @@
 
         try {
           const { formData, program, pivotValue } = await buildReportFormData();
-          const response = await fetch(buildGenerateUrl(program, pivotValue), {
+          const generateUrl = new URL("/api/generate", window.location.href);
+          generateUrl.searchParams.set("program", program);
+          generateUrl.searchParams.set("pivot_name", pivotValue);
+          const response = await fetch(generateUrl, {
             method: "POST",
+            headers: buildGenerateRequestHeaders(program, pivotValue),
             body: formData,
           });
 

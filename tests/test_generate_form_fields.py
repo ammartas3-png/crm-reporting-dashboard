@@ -52,8 +52,31 @@ class GenerateFormFieldTests(unittest.TestCase):
 
     def test_query_fallback_supplies_missing_pivot_name(self) -> None:
         form = _multipart_form({"program": "program_c"})
-        handler = Mock(path="/api/generate?pivot_name=ZA%20July")
+        handler = Mock(path="/api/generate?pivot_name=ZA%20July", headers={})
         pivot_name = generate._field_text_with_query_fallback(handler, form, "pivot_name")
+        self.assertEqual(pivot_name, "ZA July")
+
+    def test_header_fallback_supplies_missing_pivot_name(self) -> None:
+        form = _multipart_form({"program": "program_c"})
+        handler = Mock(path="/api/generate")
+        handler.headers = {"X-Report-Pivot-Name": "ZA%20July"}
+        pivot_name = generate._resolve_pivot_name(handler, form)
+        self.assertEqual(pivot_name, "ZA July")
+
+    def test_upload_metadata_supplies_missing_pivot_name(self) -> None:
+        form = _multipart_form(
+            {
+                "program": "program_c",
+                "monthly_comments_upload_id": "upload-123",
+            }
+        )
+        handler = Mock(path="/api/generate")
+        handler.headers = {}
+        pivot_name = generate._resolve_pivot_name(
+            handler,
+            form,
+            {"pivot_name": "ZA July", "program": "program_c"},
+        )
         self.assertEqual(pivot_name, "ZA July")
 
     def test_monthly_upload_id_forces_program_c(self) -> None:
@@ -63,14 +86,14 @@ class GenerateFormFieldTests(unittest.TestCase):
                 "monthly_comments_upload_id": "upload-123",
             }
         )
-        handler = Mock(path="/api/generate")
-        program = generate._resolve_report_program(handler, form, "upload-123")
+        handler = Mock(path="/api/generate", headers={})
+        program = generate._resolve_report_program(handler, form, "upload-123", {})
         self.assertEqual(program, generate.PROGRAM_C)
 
     def test_query_fallback_supplies_program_when_form_missing(self) -> None:
         form = _multipart_form({"pivot_name": "ZA July"})
-        handler = Mock(path="/api/generate?program=program_c")
-        program = generate._resolve_report_program(handler, form, "")
+        handler = Mock(path="/api/generate?program=program_c", headers={})
+        program = generate._resolve_report_program(handler, form, "", {})
         self.assertEqual(program, generate.PROGRAM_C)
 
 

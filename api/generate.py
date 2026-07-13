@@ -33,7 +33,7 @@ import cr_maker  # noqa: E402
 import lead_splitter  # noqa: E402
 import program_a_report  # noqa: E402
 import program_b_country_report  # noqa: E402
-from api.file_uploads import cleanup_upload, resolve_uploaded_file  # noqa: E402
+from api.file_uploads import cleanup_upload, resolve_uploaded_file, read_upload_metadata  # noqa: E402
 
 
 APP_REPORT = "report"
@@ -267,6 +267,33 @@ def _query_text(handler: BaseHTTPRequestHandler, name: str) -> str:
     return str(values[0]).strip()
 
 
+def _header_text(handler: BaseHTTPRequestHandler, name: str) -> str:
+    headers = getattr(handler, "headers", None)
+    if headers is None:
+        return ""
+
+    candidates = {
+        name,
+        name.title(),
+        name.upper(),
+        name.lower(),
+        name.replace("_", "-"),
+        name.replace("_", "-").title(),
+    }
+    if hasattr(headers, "get"):
+        for candidate in candidates:
+            value = headers.get(candidate)
+            if value:
+                return urllib.parse.unquote(str(value).strip())
+
+    if hasattr(headers, "items"):
+        target = name.casefold()
+        for key, value in headers.items():
+            if key.casefold() == target and value:
+                return urllib.parse.unquote(str(value).strip())
+    return ""
+
+
 def _field_text_with_query_fallback(
     handler: BaseHTTPRequestHandler,
     form: cgi.FieldStorage,
@@ -275,6 +302,10 @@ def _field_text_with_query_fallback(
     value = _field_text(form, name)
     if value:
         return value
+    header_name = f"x-report-{name.replace('_', '-')}"
+    header_value = _header_text(handler, header_name)
+    if header_value:
+        return header_value
     return _query_text(handler, name)
 
 
@@ -282,13 +313,29 @@ def _resolve_report_program(
     handler: BaseHTTPRequestHandler,
     form: cgi.FieldStorage,
     monthly_comments_upload_id: str,
+    upload_meta: dict[str, str] | None = None,
 ) -> str:
     if monthly_comments_upload_id:
         return PROGRAM_C
+    if upload_meta and upload_meta.get("program") in {PROGRAM_A, PROGRAM_B, PROGRAM_C}:
+        return upload_meta["program"]
     program = _field_text_with_query_fallback(handler, form, "program") or PROGRAM_A
     if program not in {PROGRAM_A, PROGRAM_B, PROGRAM_C}:
         raise ValueError("Please select a report program.")
     return program
+
+
+def _resolve_pivot_name(
+    handler: BaseHTTPRequestHandler,
+    form: cgi.FieldStorage,
+    upload_meta: dict[str, str] | None = None,
+) -> str:
+    pivot_name = _field_text_with_query_fallback(handler, form, "pivot_name")
+    if pivot_name:
+        return pivot_name
+    if upload_meta:
+        return str(upload_meta.get("pivot_name", "")).strip()
+    return ""
 
 
 def _optional_text(form: cgi.FieldStorage, name: str) -> str | None:
@@ -1385,7 +1432,7 @@ class handler(BaseHTTPRequestHandler):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Report-Pivot-Name, X-Report-Program")
         self.end_headers()
 
     def do_POST(self) -> None:
@@ -1415,12 +1462,15 @@ class handler(BaseHTTPRequestHandler):
                     monthly_comments_upload_id = _field_text(
                         form, "monthly_comments_upload_id"
                     )
+                    upload_meta = (
+                        read_upload_metadata(monthly_comments_upload_id)
+                        if monthly_comments_upload_id
+                        else {}
+                    )
                     program = _resolve_report_program(
-                        self, form, monthly_comments_upload_id
+                        self, form, monthly_comments_upload_id, upload_meta
                     )
-                    pivot_name = _field_text_with_query_fallback(
-                        self, form, "pivot_name"
-                    )
+                    pivot_name = _resolve_pivot_name(self, form, upload_meta)
                     if program in {PROGRAM_A, PROGRAM_C} and not pivot_name:
                         raise ValueError("Pivot table name is required for this report program.")
 

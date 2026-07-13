@@ -30,6 +30,9 @@ def save_chunk(
     total_chunks: int,
     filename: str,
     chunk_bytes: bytes,
+    *,
+    pivot_name: str | None = None,
+    program: str | None = None,
 ) -> Path | None:
     if total_chunks < 1:
         raise ValueError("total_chunks must be at least 1.")
@@ -42,10 +45,19 @@ def save_chunk(
 
     workspace = upload_workspace(upload_id)
     (workspace / f"chunk_{chunk_index}").write_bytes(chunk_bytes)
-    (workspace / "meta.json").write_text(
-        json.dumps({"filename": filename, "total_chunks": total_chunks}),
-        encoding="utf-8",
-    )
+
+    meta_path = workspace / "meta.json"
+    if meta_path.exists():
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    else:
+        meta = {}
+    meta["filename"] = filename
+    meta["total_chunks"] = total_chunks
+    if pivot_name:
+        meta["pivot_name"] = pivot_name
+    if program:
+        meta["program"] = program
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
 
     if all((workspace / f"chunk_{index}").exists() for index in range(total_chunks)):
         return finalize_upload(workspace)
@@ -67,6 +79,19 @@ def finalize_upload(workspace: Path) -> Path:
 
     (workspace / "ready").write_text(str(output_path), encoding="utf-8")
     return output_path
+
+
+def read_upload_metadata(upload_id: str) -> dict[str, str]:
+    workspace = UPLOAD_ROOT / sanitize_upload_id(upload_id)
+    meta_path = workspace / "meta.json"
+    if not meta_path.exists():
+        return {}
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    return {
+        key: str(value).strip()
+        for key, value in meta.items()
+        if key in {"pivot_name", "program", "filename", "total_chunks"} and value
+    }
 
 
 def resolve_uploaded_file(upload_id: str) -> Path:

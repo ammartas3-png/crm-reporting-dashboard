@@ -6,6 +6,7 @@ from pathlib import Path
 
 from api.file_uploads import (
     cleanup_upload,
+    read_upload_metadata,
     resolve_uploaded_file,
     save_chunk,
 )
@@ -26,6 +27,22 @@ class FileUploadStorageTests(unittest.TestCase):
             self.assertIsNotNone(output_path)
             self.assertEqual(resolve_uploaded_file(upload_id).read_bytes(), original.read_bytes())
             cleanup_upload(upload_id)
+
+
+    def test_save_chunk_stores_report_metadata(self) -> None:
+        upload_id = "test-upload-meta"
+        save_chunk(
+            upload_id,
+            0,
+            1,
+            "monthly.xlsx",
+            b"workbook",
+            pivot_name="ZA July",
+            program="program_c",
+        )
+        self.assertEqual(read_upload_metadata(upload_id)["pivot_name"], "ZA July")
+        self.assertEqual(read_upload_metadata(upload_id)["program"], "program_c")
+        cleanup_upload(upload_id)
 
 
 if __name__ == "__main__":
