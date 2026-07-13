@@ -416,6 +416,7 @@
       const statusEl = document.querySelector("#status");
       const pivotName = document.querySelector("#pivot-name");
       const pivotHint = document.querySelector("#pivot-hint");
+      const pivotFieldset = document.querySelector("#pivot-fieldset");
       const outputFile = document.querySelector("#output-file");
       const outputHint = document.querySelector("#output-hint");
       const separateMInhouseRow = document.querySelector("#separate-m-inhouse-row");
@@ -532,6 +533,8 @@
         const config = programConfig[selected];
         pivotName.required = config.pivotRequired;
         pivotHint.textContent = config.pivotHint;
+        pivotFieldset.hidden = !config.pivotRequired;
+        pivotName.disabled = false;
         outputFile.placeholder = config.output;
         outputHint.textContent = config.outputHint;
         const isProgramA = selected === "program_a";
@@ -594,7 +597,7 @@
       }
 
       async function buildReportFormData() {
-        const formData = new FormData(form);
+        let monthlyUploadId = "";
 
         if (selectedProgram() === "program_c") {
           const monthlyFile = monthlyCommentsInput.files[0];
@@ -603,15 +606,25 @@
           }
 
           setStatus("Uploading monthly comments file in parts...", "pending");
-          const uploadId = await uploadLargeFileInChunks(monthlyFile, (done, total) => {
+          monthlyUploadId = await uploadLargeFileInChunks(monthlyFile, (done, total) => {
             setStatus(
               `Uploading monthly comments file (${done}/${total})...`,
               "pending",
             );
           });
+        }
 
+        const formData = new FormData(form);
+        formData.set("app", "report");
+        formData.set("program", selectedProgram());
+        formData.set("pivot_name", pivotName.value.trim());
+        formData.set("crm_count", crmCount.value || "1");
+
+        if (selectedProgram() === "program_c") {
           formData.delete("monthly_comments_report");
-          formData.append("monthly_comments_upload_id", uploadId);
+          if (monthlyUploadId) {
+            formData.set("monthly_comments_upload_id", monthlyUploadId);
+          }
         }
 
         return formData;

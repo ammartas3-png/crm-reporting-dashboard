@@ -247,10 +247,12 @@ def _field(form: cgi.FieldStorage, name: str) -> cgi.FieldStorage | None:
 
 
 def _field_text(form: cgi.FieldStorage, name: str) -> str:
-    value = _field(form, name)
-    if value is None:
-        return ""
-    raw = value.value
+    raw = form.getfirst(name, default=None)
+    if raw is None:
+        value = _field(form, name)
+        if value is None:
+            return ""
+        raw = value.value
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8", errors="replace")
     return str(raw or "").strip()
