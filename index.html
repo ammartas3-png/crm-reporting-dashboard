@@ -120,11 +120,11 @@
               <input
                 id="pivot-name"
                 type="text"
-                name="pivot_name"
                 autocomplete="off"
                 placeholder="Example: Today's Lead Report"
                 required
               />
+              <input id="pivot-name-submit" type="hidden" name="pivot_name" value="" />
             </label>
           </fieldset>
 
@@ -415,6 +415,7 @@
       const submitButton = document.querySelector("#submit-button");
       const statusEl = document.querySelector("#status");
       const pivotName = document.querySelector("#pivot-name");
+      const pivotNameSubmit = document.querySelector("#pivot-name-submit");
       const pivotHint = document.querySelector("#pivot-hint");
       const pivotFieldset = document.querySelector("#pivot-fieldset");
       const outputFile = document.querySelector("#output-file");
@@ -528,6 +529,16 @@
         return document.querySelector('input[name="program"]:checked').value;
       }
 
+      function syncPivotToForm() {
+        pivotNameSubmit.value = pivotName.value.trim();
+      }
+
+      function appendCheckedToggle(formData, toggleInput) {
+        if (toggleInput && toggleInput.checked && !toggleInput.disabled) {
+          formData.append(toggleInput.name, toggleInput.value);
+        }
+      }
+
       function syncProgramFields() {
         const selected = selectedProgram();
         const config = programConfig[selected];
@@ -535,6 +546,7 @@
         pivotHint.textContent = config.pivotHint;
         pivotFieldset.hidden = !config.pivotRequired;
         pivotName.disabled = false;
+        syncPivotToForm();
         outputFile.placeholder = config.output;
         outputHint.textContent = config.outputHint;
         const isProgramA = selected === "program_a";
@@ -597,9 +609,18 @@
       }
 
       async function buildReportFormData() {
+        syncPivotToForm();
+        const program = selectedProgram();
+        const pivotValue = pivotName.value.trim();
+
+        if ((program === "program_a" || program === "program_c") && !pivotValue) {
+          pivotName.focus();
+          throw new Error("Pivot table name is required for this report program.");
+        }
+
         let monthlyUploadId = "";
 
-        if (selectedProgram() === "program_c") {
+        if (program === "program_c") {
           const monthlyFile = monthlyCommentsInput.files[0];
           if (!monthlyFile) {
             throw new Error("Browse and select the monthly comments .xlsx file.");
@@ -614,20 +635,52 @@
           });
         }
 
-        const formData = new FormData(form);
-        formData.set("app", "report");
-        formData.set("program", selectedProgram());
-        formData.set("pivot_name", pivotName.value.trim());
-        formData.set("crm_count", crmCount.value || "1");
+        const formData = new FormData();
+        formData.append("app", "report");
+        formData.append("program", program);
+        formData.append("pivot_name", pivotValue);
+        formData.append("crm_count", String(crmRows().length));
 
-        if (selectedProgram() === "program_c") {
-          formData.delete("monthly_comments_report");
-          if (monthlyUploadId) {
-            formData.set("monthly_comments_upload_id", monthlyUploadId);
+        crmRows().forEach((row, index) => {
+          const fileInput = row.querySelector(".crm-file-input");
+          const platformInput = row.querySelector(".platform-input");
+          const crmFile = fileInput.files[0];
+          if (!crmFile) {
+            return;
+          }
+          formData.append(`crm_file_${index}`, crmFile, crmFile.name);
+          formData.append(`platform_${index}`, platformInput.value.trim());
+        });
+
+        const outputValue = outputFile.value.trim();
+        if (outputValue) {
+          formData.append("output_file", outputValue);
+        }
+
+        if (program === "program_a" || program === "program_b") {
+          const powerbiFile = powerbiReportInput.files[0];
+          if (powerbiFile) {
+            formData.append("powerbi_report", powerbiFile, powerbiFile.name);
           }
         }
 
-        return formData;
+        if (program === "program_c" && monthlyUploadId) {
+          formData.append("monthly_comments_upload_id", monthlyUploadId);
+        }
+
+        appendCheckedToggle(formData, separateMInhouseToggle);
+        appendCheckedToggle(formData, separateDepartmentToggle);
+
+        return { formData, program, pivotValue };
+      }
+
+      function buildGenerateUrl(program, pivotValue) {
+        const url = new URL("/api/generate", window.location.href);
+        url.searchParams.set("program", program);
+        if (pivotValue) {
+          url.searchParams.set("pivot_name", pivotValue);
+        }
+        return url;
       }
 
       function crmRows() {
@@ -716,12 +769,15 @@
       programInputs.forEach((input) => {
         input.addEventListener("change", syncProgramFields);
       });
+      pivotName.addEventListener("input", syncPivotToForm);
+      pivotName.addEventListener("change", syncPivotToForm);
 
       addCrmFileButton.addEventListener("click", addCrmRow);
 
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         syncProgramFields();
+        syncPivotToForm();
         updateCrmRowIndexes();
         validateCrmRows();
 
@@ -734,9 +790,10 @@
         setStatus("Uploading files and generating workbook...", "pending");
 
         try {
-          const response = await fetch("/api/generate", {
+          const { formData, program, pivotValue } = await buildReportFormData();
+          const response = await fetch(buildGenerateUrl(program, pivotValue), {
             method: "POST",
-            body: await buildReportFormData(),
+            body: formData,
           });
 
           if (!response.ok) {

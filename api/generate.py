@@ -13,6 +13,7 @@ import re
 import sys
 import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 import zipfile
@@ -256,6 +257,38 @@ def _field_text(form: cgi.FieldStorage, name: str) -> str:
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8", errors="replace")
     return str(raw or "").strip()
+
+
+def _query_text(handler: BaseHTTPRequestHandler, name: str) -> str:
+    parsed = urllib.parse.urlparse(handler.path)
+    values = urllib.parse.parse_qs(parsed.query, keep_blank_values=True).get(name)
+    if not values:
+        return ""
+    return str(values[0]).strip()
+
+
+def _field_text_with_query_fallback(
+    handler: BaseHTTPRequestHandler,
+    form: cgi.FieldStorage,
+    name: str,
+) -> str:
+    value = _field_text(form, name)
+    if value:
+        return value
+    return _query_text(handler, name)
+
+
+def _resolve_report_program(
+    handler: BaseHTTPRequestHandler,
+    form: cgi.FieldStorage,
+    monthly_comments_upload_id: str,
+) -> str:
+    if monthly_comments_upload_id:
+        return PROGRAM_C
+    program = _field_text_with_query_fallback(handler, form, "program") or PROGRAM_A
+    if program not in {PROGRAM_A, PROGRAM_B, PROGRAM_C}:
+        raise ValueError("Please select a report program.")
+    return program
 
 
 def _optional_text(form: cgi.FieldStorage, name: str) -> str | None:
@@ -1379,8 +1412,15 @@ class handler(BaseHTTPRequestHandler):
             with tempfile.TemporaryDirectory() as tmp:
                 tmp_path = Path(tmp)
                 if app == APP_REPORT:
-                    program = _program_from_form(form)
-                    pivot_name = _field_text(form, "pivot_name")
+                    monthly_comments_upload_id = _field_text(
+                        form, "monthly_comments_upload_id"
+                    )
+                    program = _resolve_report_program(
+                        self, form, monthly_comments_upload_id
+                    )
+                    pivot_name = _field_text_with_query_fallback(
+                        self, form, "pivot_name"
+                    )
                     if program in {PROGRAM_A, PROGRAM_C} and not pivot_name:
                         raise ValueError("Pivot table name is required for this report program.")
 
@@ -1395,7 +1435,6 @@ class handler(BaseHTTPRequestHandler):
 
                     powerbi_path: Path | None = None
                     monthly_comments_path: Path | None = None
-                    monthly_comments_upload_id = _field_text(form, "monthly_comments_upload_id")
                     if program == PROGRAM_C:
                         if monthly_comments_upload_id:
                             monthly_comments_path = resolve_uploaded_file(
