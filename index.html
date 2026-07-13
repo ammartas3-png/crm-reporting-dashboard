@@ -533,12 +533,6 @@
         pivotNameSubmit.value = pivotName.value.trim();
       }
 
-      function appendCheckedToggle(formData, toggleInput) {
-        if (toggleInput && toggleInput.checked && !toggleInput.disabled) {
-          formData.append(toggleInput.name, toggleInput.value);
-        }
-      }
-
       function syncProgramFields() {
         const selected = selectedProgram();
         const config = programConfig[selected];
@@ -571,6 +565,7 @@
       }
 
       const LARGE_FILE_CHUNK_SIZE = 3 * 1024 * 1024;
+      const DIRECT_MONTHLY_UPLOAD_LIMIT = 3 * 1024 * 1024;
 
       async function uploadLargeFileInChunks(file, onProgress, metadata = {}) {
         const uploadId = crypto.randomUUID();
@@ -581,6 +576,8 @@
           const end = Math.min(start + LARGE_FILE_CHUNK_SIZE, file.size);
           const chunk = file.slice(start, end);
           const chunkForm = new FormData();
+          chunkForm.append("app", "report");
+          chunkForm.append("report_action", "upload_monthly_chunk");
           chunkForm.append("upload_id", uploadId);
           chunkForm.append("chunk_index", String(chunkIndex));
           chunkForm.append("total_chunks", String(totalChunks));
@@ -596,7 +593,11 @@
           }
           chunkForm.append("chunk", chunk, `${file.name}.part${chunkIndex}`);
 
-          const response = await fetch("/api/upload_file", {
+          const chunkUrl = new URL("/api/generate", window.location.href);
+          chunkUrl.searchParams.set("report_action", "upload_monthly_chunk");
+          chunkUrl.searchParams.set("upload_id", uploadId);
+
+          const response = await fetch(chunkUrl, {
             method: "POST",
             body: chunkForm,
           });
@@ -667,24 +668,27 @@
         }
 
         let monthlyUploadId = "";
+        let monthlyFile = null;
 
         if (program === "program_c") {
-          const monthlyFile = monthlyCommentsInput.files[0];
+          monthlyFile = monthlyCommentsInput.files[0];
           if (!monthlyFile) {
             throw new Error("Browse and select the monthly comments .xlsx file.");
           }
 
-          setStatus("Uploading monthly comments file in parts...", "pending");
-          monthlyUploadId = await uploadLargeFileInChunks(
-            monthlyFile,
-            (done, total) => {
-              setStatus(
-                `Uploading monthly comments file (${done}/${total})...`,
-                "pending",
-              );
-            },
-            { pivotName: pivotValue, program, crmCount: String(crmEntries.length) },
-          );
+          if (monthlyFile.size > DIRECT_MONTHLY_UPLOAD_LIMIT) {
+            setStatus("Uploading monthly comments file in parts...", "pending");
+            monthlyUploadId = await uploadLargeFileInChunks(
+              monthlyFile,
+              (done, total) => {
+                setStatus(
+                  `Uploading monthly comments file (${done}/${total})...`,
+                  "pending",
+                );
+              },
+              { pivotName: pivotValue, program, crmCount: String(crmEntries.length) },
+            );
+          }
         }
 
         const formData = new FormData();
@@ -692,6 +696,14 @@
         formData.append("program", program);
         formData.append("pivot_name", pivotValue);
         formData.append("crm_count", String(crmEntries.length));
+        formData.append(
+          "separate_m_inhouse",
+          separateMInhouseToggle.checked ? "1" : "0",
+        );
+        formData.append(
+          "separate_department",
+          separateDepartmentToggle.checked ? "1" : "0",
+        );
 
         crmEntries.forEach((entry, index) => {
           formData.append(`crm_file_${index}`, entry.crmFile, entry.crmFile.name);
@@ -710,22 +722,45 @@
           }
         }
 
-        if (program === "program_c" && monthlyUploadId) {
-          formData.append("monthly_comments_upload_id", monthlyUploadId);
+        if (program === "program_c") {
+          if (monthlyUploadId) {
+            formData.append("monthly_comments_upload_id", monthlyUploadId);
+          } else if (monthlyFile) {
+            formData.append("monthly_comments_report", monthlyFile, monthlyFile.name);
+          }
         }
 
-        appendCheckedToggle(formData, separateMInhouseToggle);
-        appendCheckedToggle(formData, separateDepartmentToggle);
-
-        return { formData, program, pivotValue, crmCount: crmEntries.length };
+        return {
+          formData,
+          program,
+          pivotValue,
+          crmCount: crmEntries.length,
+          monthlyUploadId,
+          outputValue,
+        };
       }
 
-      function buildGenerateRequestHeaders(program, pivotValue, crmCount) {
-        return {
+      function buildGenerateRequestHeaders(
+        program,
+        pivotValue,
+        crmCount,
+        monthlyUploadId,
+        outputValue,
+      ) {
+        const headers = {
           "X-Report-Program": program,
           "X-Report-Pivot-Name": encodeURIComponent(pivotValue),
           "X-Report-Crm-Count": String(crmCount),
+          "X-Report-Separate-M-Inhouse": separateMInhouseToggle.checked ? "1" : "0",
+          "X-Report-Separate-Department": separateDepartmentToggle.checked ? "1" : "0",
         };
+        if (monthlyUploadId) {
+          headers["X-Report-Monthly-Comments-Upload-Id"] = monthlyUploadId;
+        }
+        if (outputValue) {
+          headers["X-Report-Output-File"] = encodeURIComponent(outputValue);
+        }
+        return headers;
       }
 
       function crmRows() {
@@ -831,14 +866,33 @@
         setStatus("Uploading files and generating workbook...", "pending");
 
         try {
-          const { formData, program, pivotValue, crmCount } = await buildReportFormData();
+          const {
+            formData,
+            program,
+            pivotValue,
+            crmCount,
+            monthlyUploadId,
+            outputValue,
+          } = await buildReportFormData();
           const generateUrl = new URL("/api/generate", window.location.href);
           generateUrl.searchParams.set("program", program);
           generateUrl.searchParams.set("pivot_name", pivotValue);
           generateUrl.searchParams.set("crm_count", String(crmCount));
+          if (monthlyUploadId) {
+            generateUrl.searchParams.set(
+              "monthly_comments_upload_id",
+              monthlyUploadId,
+            );
+          }
           const response = await fetch(generateUrl, {
             method: "POST",
-            headers: buildGenerateRequestHeaders(program, pivotValue, crmCount),
+            headers: buildGenerateRequestHeaders(
+              program,
+              pivotValue,
+              crmCount,
+              monthlyUploadId,
+              outputValue,
+            ),
             body: formData,
           });
 

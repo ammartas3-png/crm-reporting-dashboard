@@ -142,6 +142,24 @@ class GenerateFormFieldTests(unittest.TestCase):
             self.assertEqual(platforms, ["Fintana"])
             self.assertTrue(crm_files[0].exists())
 
+    def test_monthly_upload_id_from_query_string(self) -> None:
+        form = _multipart_form({})
+        handler = Mock(
+            path="/api/generate?monthly_comments_upload_id=upload-abc-123",
+            headers={},
+        )
+        upload_id = generate._resolve_monthly_comments_upload_id(handler, form)
+        self.assertEqual(upload_id, "upload-abc-123")
+
+    def test_monthly_upload_id_from_header(self) -> None:
+        form = _multipart_form({})
+        handler = Mock(path="/api/generate", headers={})
+        handler.headers = {
+            "X-Report-Monthly-Comments-Upload-Id": "upload-header-123",
+        }
+        upload_id = generate._resolve_monthly_comments_upload_id(handler, form)
+        self.assertEqual(upload_id, "upload-header-123")
+
 
 if __name__ == "__main__":
     unittest.main()

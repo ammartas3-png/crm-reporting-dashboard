@@ -111,11 +111,6 @@ class handler(BaseHTTPRequestHandler):
             response_bytes = _json_bytes(response)
             status_code = 200
         except Exception as exc:
-            if upload_id:
-                try:
-                    cleanup_upload(upload_id)
-                except Exception:
-                    pass
             response_bytes = _json_bytes({"error": str(exc)})
             status_code = 400
 

@@ -33,7 +33,13 @@ import cr_maker  # noqa: E402
 import lead_splitter  # noqa: E402
 import program_a_report  # noqa: E402
 import program_b_country_report  # noqa: E402
-from api.file_uploads import cleanup_upload, resolve_uploaded_file, read_upload_metadata  # noqa: E402
+from api.file_uploads import (  # noqa: E402
+    CHUNK_UPLOAD_MAX_BYTES,
+    cleanup_upload,
+    read_upload_metadata,
+    resolve_uploaded_file,
+    save_chunk,
+)
 
 
 APP_REPORT = "report"
@@ -46,6 +52,7 @@ PROGRAM_C = "program_c"
 PROGRAM_A_OUTPUT_FILENAME = "crm_powerbi_output.xlsx"
 PROGRAM_B_OUTPUT_FILENAME = "crm_country_report.xlsx"
 PROGRAM_C_OUTPUT_FILENAME = "crm_monthly_comments_output.xlsx"
+REPORT_ACTION_UPLOAD_MONTHLY_CHUNK = "upload_monthly_chunk"
 MAX_UPLOAD_BYTES = 45 * 1024 * 1024
 XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 DATABASE_CHECK_WEBHOOK_URL = os.environ.get(
@@ -380,6 +387,110 @@ def _collect_crm_uploads(
     if not crm_files:
         raise ValueError("At least one CRM file is required.")
     return crm_files, platforms
+
+
+def _resolve_monthly_comments_upload_id(
+    handler: BaseHTTPRequestHandler,
+    form: cgi.FieldStorage,
+) -> str:
+    return _field_text_with_query_fallback(
+        handler, form, "monthly_comments_upload_id"
+    )
+
+
+def _resolve_monthly_comments_path(
+    handler: BaseHTTPRequestHandler,
+    form: cgi.FieldStorage,
+    directory: Path,
+    upload_id: str,
+) -> Path:
+    if upload_id:
+        try:
+            return resolve_uploaded_file(upload_id)
+        except ValueError as exc:
+            raise ValueError(
+                "Monthly comments upload was not found on the server. "
+                "Please refresh the page, re-select the monthly comments file, "
+                "and try again."
+            ) from exc
+
+    monthly_field = _field(form, "monthly_comments_report")
+    if _has_upload(monthly_field):
+        return _save_upload(
+            monthly_field,
+            directory,
+            "Monthly comments report",
+        )
+
+    raise ValueError("Please upload the monthly comments .xlsx file.")
+
+
+def _resolve_toggle(
+    handler: BaseHTTPRequestHandler,
+    form: cgi.FieldStorage,
+    name: str,
+    *,
+    default: bool = False,
+) -> bool:
+    value = _field_text_with_query_fallback(handler, form, name)
+    if not value:
+        return default
+    return _is_truthy(value)
+
+
+def _field_int_with_fallback(
+    handler: BaseHTTPRequestHandler,
+    form: cgi.FieldStorage,
+    name: str,
+) -> int:
+    value = _field_text_with_query_fallback(handler, form, name)
+    if not value:
+        raise ValueError(f"{name} is required.")
+    return int(value)
+
+
+def _handle_monthly_chunk_upload(
+    handler: BaseHTTPRequestHandler,
+    form: cgi.FieldStorage,
+) -> bytes:
+    upload_id = _field_text_with_query_fallback(handler, form, "upload_id")
+    chunk_index = _field_int_with_fallback(handler, form, "chunk_index")
+    total_chunks = _field_int_with_fallback(handler, form, "total_chunks")
+    filename = (
+        _field_text_with_query_fallback(handler, form, "filename")
+        or "monthly_comments.xlsx"
+    )
+    chunk_field = _field(form, "chunk")
+    if chunk_field is None or not getattr(chunk_field, "file", None):
+        raise ValueError("Upload chunk file is required.")
+
+    chunk_bytes = chunk_field.file.read()
+    if not chunk_bytes:
+        raise ValueError("Upload chunk file is empty.")
+    if len(chunk_bytes) > CHUNK_UPLOAD_MAX_BYTES:
+        raise ValueError(
+            f"Each upload chunk must be {CHUNK_UPLOAD_MAX_BYTES // (1024 * 1024)} MB or smaller."
+        )
+
+    output_path = save_chunk(
+        upload_id,
+        chunk_index,
+        total_chunks,
+        filename,
+        chunk_bytes,
+        pivot_name=_field_text_with_query_fallback(handler, form, "pivot_name") or None,
+        program=_field_text_with_query_fallback(handler, form, "program") or None,
+        crm_count=_field_text_with_query_fallback(handler, form, "crm_count") or None,
+    )
+    return _json_bytes(
+        {
+            "ok": True,
+            "upload_id": upload_id,
+            "chunk_index": chunk_index,
+            "total_chunks": total_chunks,
+            "complete": output_path is not None,
+        }
+    )
 
 
 def _optional_text(form: cgi.FieldStorage, name: str) -> str | None:
@@ -1476,12 +1587,28 @@ class handler(BaseHTTPRequestHandler):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Report-Pivot-Name, X-Report-Program, X-Report-Crm-Count")
+        self.send_header(
+            "Access-Control-Allow-Headers",
+            "Content-Type, X-Report-Pivot-Name, X-Report-Program, X-Report-Crm-Count, "
+            "X-Report-Monthly-Comments-Upload-Id, X-Report-Separate-M-Inhouse, "
+            "X-Report-Separate-Department, X-Report-Output-File",
+        )
         self.end_headers()
 
     def do_POST(self) -> None:
         try:
             form = _parse_form(self)
+            report_action = _field_text_with_query_fallback(self, form, "report_action")
+            if report_action == REPORT_ACTION_UPLOAD_MONTHLY_CHUNK:
+                response_bytes = _handle_monthly_chunk_upload(self, form)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(response_bytes)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(response_bytes)
+                return
+
             app = _app_from_form(form)
             if app == APP_DATABASE_CHECK:
                 database_action = (_field_text(form, "database_action") or "run").casefold()
@@ -1503,8 +1630,8 @@ class handler(BaseHTTPRequestHandler):
             with tempfile.TemporaryDirectory() as tmp:
                 tmp_path = Path(tmp)
                 if app == APP_REPORT:
-                    monthly_comments_upload_id = _field_text(
-                        form, "monthly_comments_upload_id"
+                    monthly_comments_upload_id = _resolve_monthly_comments_upload_id(
+                        self, form
                     )
                     upload_meta = (
                         read_upload_metadata(monthly_comments_upload_id)
@@ -1521,16 +1648,12 @@ class handler(BaseHTTPRequestHandler):
                     powerbi_path: Path | None = None
                     monthly_comments_path: Path | None = None
                     if program == PROGRAM_C:
-                        if monthly_comments_upload_id:
-                            monthly_comments_path = resolve_uploaded_file(
-                                monthly_comments_upload_id
-                            )
-                        else:
-                            monthly_comments_path = _save_upload(
-                                _field(form, "monthly_comments_report"),
-                                tmp_path,
-                                "Monthly comments report",
-                            )
+                        monthly_comments_path = _resolve_monthly_comments_path(
+                            self,
+                            form,
+                            tmp_path,
+                            monthly_comments_upload_id,
+                        )
                     else:
                         powerbi_path = _save_upload(
                             _field(form, "powerbi_report"),
@@ -1545,7 +1668,7 @@ class handler(BaseHTTPRequestHandler):
                         PROGRAM_C: PROGRAM_C_OUTPUT_FILENAME,
                     }.get(program, PROGRAM_A_OUTPUT_FILENAME)
                     response_filename = _output_filename(
-                        _field_text(form, "output_file"),
+                        _field_text_with_query_fallback(self, form, "output_file"),
                         default_output,
                     )
                     output_path = tmp_path / response_filename
@@ -1560,7 +1683,9 @@ class handler(BaseHTTPRequestHandler):
                         common_args["powerbi_report"] = powerbi_path
                     if monthly_comments_path is not None:
                         common_args["monthly_comments_report"] = monthly_comments_path
-                    separate_department = _is_truthy(_field_text(form, "separate_department"))
+                    separate_department = _resolve_toggle(
+                        self, form, "separate_department"
+                    )
                     if program == PROGRAM_B:
                         program_b_country_report.build_output(
                             **common_args,
@@ -1569,8 +1694,11 @@ class handler(BaseHTTPRequestHandler):
                         response_bytes = output_path.read_bytes()
                         response_content_type = XLSX_CONTENT_TYPE
                     else:
-                        separate_m_inhousemedia = _is_truthy(
-                            _field_text(form, "separate_m_inhouse")
+                        separate_m_inhousemedia = _resolve_toggle(
+                            self,
+                            form,
+                            "separate_m_inhouse",
+                            default=True,
                         )
                         generated_outputs = program_a_report.build_output_files(
                             **common_args,
