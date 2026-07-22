@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from openpyxl import Workbook, load_workbook
-from openpyxl.formatting.rule import ColorScaleRule
+from openpyxl.formatting.rule import CellIsRule, ColorScaleRule, FormulaRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
@@ -989,6 +989,122 @@ def _apply_all_borders(worksheet, total_rows: int, total_cols: int) -> None:
             cell.border = THIN_BORDER
 
 
+_FORMULA_INTEGER_RE = re.compile(r"-?\d+")
+
+
+def _id_literal_for_formula(id_value: Any) -> str:
+    if isinstance(id_value, bool):
+        return f'"{id_value}"'
+    if isinstance(id_value, int):
+        return str(id_value)
+    if isinstance(id_value, float):
+        return str(int(id_value)) if id_value.is_integer() else repr(id_value)
+    value = str(id_value).strip()
+    if _FORMULA_INTEGER_RE.fullmatch(value):
+        return value
+    escaped = value.replace('"', '""')
+    return f'"{escaped}"'
+
+
+def _str_literal_for_formula(value: Any) -> str:
+    text = "" if value is None else str(value)
+    return f'"{text.replace(chr(34), chr(34) * 2)}"'
+
+
+def _day_lookup_formula(
+    *,
+    id_lit: str,
+    platform_lit: str,
+    target_col_letter: str,
+    main_sheet_name: str,
+    main_id_col_letter: str,
+    main_platform_col_letter: str,
+    first_row: int,
+    last_row: int,
+) -> str:
+    """Formula that pulls a Main Report value matched by ID and Platform."""
+    safe_name = main_sheet_name.replace("'", "''")
+    main_ref = f"'{safe_name}'!"
+    id_range = f"{main_ref}${main_id_col_letter}${first_row}:${main_id_col_letter}${last_row}"
+    platform_range = (
+        f"{main_ref}${main_platform_col_letter}${first_row}:"
+        f"${main_platform_col_letter}${last_row}"
+    )
+    target_range = f"{main_ref}${target_col_letter}${first_row}:${target_col_letter}${last_row}"
+
+    match_expr = f"MATCH({id_lit},{id_range},0)"
+    platform_expr = f"INDEX({platform_range},{match_expr})"
+    target_expr = f"INDEX({target_range},{match_expr})"
+
+    return (
+        f"=IFERROR("
+        f"IF({platform_expr}={platform_lit},"
+        f'IF({target_expr}="","",{target_expr}),'
+        f'""),'
+        f'"")'
+    )
+
+
+_NO_ANSWER_VARIANTS = [
+    "No Answer 1",
+    "No Answer 2",
+    "No Answer 3",
+    "No Answer 4",
+    "No Answer 5",
+    "No Answer 5 up",
+]
+
+
+def _apply_status_color_cf(ws, status_range_str: str) -> None:
+    """Color a formula-driven Status column using conditional formatting."""
+    for status_text, (fill_hex, font_hex) in STATUS_COLORS.items():
+        ws.conditional_formatting.add(
+            status_range_str,
+            CellIsRule(
+                operator="equal",
+                formula=[f'"{status_text}"'],
+                fill=PatternFill("solid", start_color=fill_hex, end_color=fill_hex),
+                font=Font(color=font_hex, name="Arial"),
+            ),
+        )
+
+    fill_hex, font_hex = NO_ANSWER_COLORS
+    for variant in _NO_ANSWER_VARIANTS:
+        ws.conditional_formatting.add(
+            status_range_str,
+            CellIsRule(
+                operator="equal",
+                formula=[f'"{variant}"'],
+                fill=PatternFill("solid", start_color=fill_hex, end_color=fill_hex),
+                font=Font(color=font_hex, name="Arial"),
+            ),
+        )
+
+
+def _apply_cb_black_cf(ws, cb_range_str: str, status_col_letter: str, first_data_row: int) -> None:
+    ws.conditional_formatting.add(
+        cb_range_str,
+        FormulaRule(
+            formula=[
+                f'AND(${status_col_letter}{first_data_row}<>"Call Again",'
+                f'${status_col_letter}{first_data_row}<>"")'
+            ],
+            fill=PatternFill("solid", start_color="FF000000", end_color="FF000000"),
+        ),
+    )
+
+
+def _apply_comments_yellow_cf(ws, comments_range_str: str) -> None:
+    ws.conditional_formatting.add(
+        comments_range_str,
+        CellIsRule(
+            operator="equal",
+            formula=['"There was no comments on powerBI"'],
+            fill=PatternFill("solid", start_color="FFFFFF00", end_color="FFFFFF00"),
+        ),
+    )
+
+
 def _sanitize_sheet_title(name: str) -> str:
     invalid_chars = set(":\\/?*[]")
     cleaned = "".join(character for character in name if character not in invalid_chars).strip()
@@ -1105,8 +1221,28 @@ def _write_output_sheet(
         width = min(max(max_length + 2, len(str(header or "")) + 2), 60)
         ws_data.column_dimensions[column_cells[0].column_letter].width = width
 
-    pivot_start_row = last_data_row + 3
-    current_row = pivot_start_row
+    _write_output_pivots(
+        ws_data,
+        rows,
+        sheet_name=sheet_name,
+        pivot_name=pivot_name,
+        last_data_row=last_data_row,
+        include_status_pivot=include_status_pivot,
+        include_campaign_pivot=include_campaign_pivot,
+    )
+
+
+def _write_output_pivots(
+    ws_data,
+    rows: list[dict[str, Any]],
+    *,
+    sheet_name: str,
+    pivot_name: str,
+    last_data_row: int,
+    include_status_pivot: bool = True,
+    include_campaign_pivot: bool = True,
+) -> None:
+    current_row = last_data_row + 3
     current_col = 1
 
     pivot_min_widths = [20, 32, 10, 10]
@@ -1153,6 +1289,162 @@ def _write_output_sheet(
         )
 
 
+def _write_day_sheet(
+    ws_data,
+    rows: list[dict[str, Any]],
+    *,
+    sheet_name: str,
+    pivot_name: str,
+    table_display_name: str,
+    main_sheet_name: str,
+    main_last_row: int,
+    include_status_pivot: bool = True,
+    include_campaign_pivot: bool = True,
+) -> None:
+    """Write a day tab whose Status/CB/Comments are formula-linked to Main Report."""
+    columns = PROGRAM_A_OUTPUT_COLUMNS
+    status_col_idx = columns.index("Status") + 1
+    cb_col_idx = columns.index("CB") + 1
+    comments_col_idx = columns.index("Comments") + 1
+    id_col_idx = columns.index("ID") + 1
+    platform_col_idx = columns.index("Platform") + 1
+    formula_cols = {status_col_idx, cb_col_idx, comments_col_idx}
+    main_id_letter = get_column_letter(id_col_idx)
+    main_platform_letter = get_column_letter(platform_col_idx)
+
+    ws_data.append(columns)
+    for cell in ws_data[1]:
+        cell.font = Font(bold=True, name="Arial")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    for idx, row in enumerate(rows):
+        excel_row = idx + 2
+        id_lit = _id_literal_for_formula(row.get("ID"))
+        platform_lit = _str_literal_for_formula(row.get("Platform"))
+
+        for col_idx, column in enumerate(columns, start=1):
+            if col_idx in formula_cols:
+                value = _day_lookup_formula(
+                    id_lit=id_lit,
+                    platform_lit=platform_lit,
+                    target_col_letter=get_column_letter(col_idx),
+                    main_sheet_name=main_sheet_name,
+                    main_id_col_letter=main_id_letter,
+                    main_platform_col_letter=main_platform_letter,
+                    first_row=2,
+                    last_row=main_last_row,
+                )
+            else:
+                value = row.get(column, "")
+                if value is None:
+                    value = ""
+
+            cell = ws_data.cell(row=excel_row, column=col_idx, value=value)
+            if col_idx == comments_col_idx:
+                cell.alignment = Alignment(
+                    wrap_text=True,
+                    vertical="top",
+                    horizontal="center",
+                )
+            else:
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.font = Font(name="Arial")
+
+    last_data_row = ws_data.max_row
+    _apply_all_borders(ws_data, last_data_row, len(columns))
+
+    if last_data_row >= 2:
+        status_letter = get_column_letter(status_col_idx)
+        cb_letter = get_column_letter(cb_col_idx)
+        comments_letter = get_column_letter(comments_col_idx)
+        _apply_status_color_cf(ws_data, f"{status_letter}2:{status_letter}{last_data_row}")
+        _apply_cb_black_cf(
+            ws_data,
+            f"{cb_letter}2:{cb_letter}{last_data_row}",
+            status_letter,
+            first_data_row=2,
+        )
+        _apply_comments_yellow_cf(
+            ws_data,
+            f"{comments_letter}2:{comments_letter}{last_data_row}",
+        )
+
+    last_col_letter = get_column_letter(len(columns))
+    table = Table(displayName=table_display_name, ref=f"A1:{last_col_letter}{last_data_row}")
+    table.tableStyleInfo = TableStyleInfo(
+        name="TableStyleMedium2",
+        showFirstColumn=False,
+        showLastColumn=False,
+        showRowStripes=True,
+        showColumnStripes=False,
+    )
+    ws_data.add_table(table)
+
+    for column_cells in ws_data.columns:
+        header = column_cells[0].value
+        max_length = max(len(str(cell.value or "")) for cell in column_cells[:100])
+        width = min(max(max_length + 2, len(str(header or "")) + 2), 60)
+        ws_data.column_dimensions[column_cells[0].column_letter].width = width
+
+    _write_output_pivots(
+        ws_data,
+        rows,
+        sheet_name=sheet_name,
+        pivot_name=pivot_name,
+        last_data_row=last_data_row,
+        include_status_pivot=include_status_pivot,
+        include_campaign_pivot=include_campaign_pivot,
+    )
+
+
+MAIN_REPORT_SHEET_TITLE = "Main Report"
+
+
+def write_output_with_day_sheets(
+    rows: list[dict[str, Any]],
+    output_file: Path,
+    pivot_name: str,
+    *,
+    include_status_pivot: bool = True,
+    include_campaign_pivot: bool = True,
+) -> None:
+    """Write a Main Report sheet plus one formula-linked tab per day."""
+    workbook = Workbook()
+    used_titles: set[str] = set()
+
+    main_title = _unique_sheet_title(MAIN_REPORT_SHEET_TITLE, used_titles)
+    ws_main = workbook.active
+    ws_main.title = main_title
+    _write_output_sheet(
+        ws_main,
+        rows,
+        sheet_name=main_title,
+        pivot_name=pivot_name,
+        table_display_name=_table_display_name(main_title),
+        include_status_pivot=include_status_pivot,
+        include_campaign_pivot=include_campaign_pivot,
+    )
+    main_last_row = len(rows) + 1
+
+    for day_key, day_rows in _split_rows_by_day(rows):
+        sheet_name = _unique_sheet_title(_day_sheet_name(day_key), used_titles)
+        ws_day = workbook.create_sheet(sheet_name)
+        _write_day_sheet(
+            ws_day,
+            day_rows,
+            sheet_name=sheet_name,
+            pivot_name=pivot_name,
+            table_display_name=_table_display_name(sheet_name),
+            main_sheet_name=main_title,
+            main_last_row=main_last_row,
+            include_status_pivot=include_status_pivot,
+            include_campaign_pivot=include_campaign_pivot,
+        )
+
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(output_file)
+
+
 def write_output(
     rows: list[dict[str, Any]],
     output_file: Path,
@@ -1176,56 +1468,19 @@ def write_output(
     workbook.save(output_file)
 
 
-def _grouped_sheet_buckets(
-    rows: list[dict[str, Any]],
-    *,
-    separate_department: bool,
-    separate_by_days: bool,
-) -> list[tuple[str, list[dict[str, Any]]]]:
-    if separate_department and separate_by_days:
-        buckets: list[tuple[str, list[dict[str, Any]]]] = []
-        for department_key, department_rows in _split_rows_by_department(rows):
-            department_label = _department_sheet_name(department_key)
-            for day_key, day_rows in _split_rows_by_day(department_rows):
-                buckets.append((f"{department_label} {day_key}", day_rows))
-        return buckets
-
-    if separate_department:
-        return [
-            (_department_sheet_name(department_key), department_rows)
-            for department_key, department_rows in _split_rows_by_department(rows)
-        ]
-
-    if separate_by_days:
-        return [
-            (_day_sheet_name(day_key), day_rows)
-            for day_key, day_rows in _split_rows_by_day(rows)
-        ]
-
-    return [("CRM Output", rows)]
-
-
-def write_output_with_grouped_sheets(
+def write_output_with_department_sheets(
     rows: list[dict[str, Any]],
     output_file: Path,
     pivot_name: str,
-    *,
-    separate_department: bool = False,
-    separate_by_days: bool = False,
     include_status_pivot: bool = True,
     include_campaign_pivot: bool = True,
 ) -> None:
-    buckets = _grouped_sheet_buckets(
-        rows,
-        separate_department=separate_department,
-        separate_by_days=separate_by_days,
-    )
     workbook = Workbook()
     used_titles: set[str] = set()
     first_sheet = True
 
-    for raw_sheet_name, sheet_rows in buckets:
-        sheet_name = _unique_sheet_title(raw_sheet_name, used_titles)
+    for department_key, department_rows in _split_rows_by_department(rows):
+        sheet_name = _unique_sheet_title(_department_sheet_name(department_key), used_titles)
         if first_sheet:
             ws_data = workbook.active
             ws_data.title = sheet_name
@@ -1235,7 +1490,7 @@ def write_output_with_grouped_sheets(
 
         _write_output_sheet(
             ws_data,
-            sheet_rows,
+            department_rows,
             sheet_name=sheet_name,
             pivot_name=pivot_name,
             table_display_name=_table_display_name(sheet_name),
@@ -1245,24 +1500,6 @@ def write_output_with_grouped_sheets(
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output_file)
-
-
-def write_output_with_department_sheets(
-    rows: list[dict[str, Any]],
-    output_file: Path,
-    pivot_name: str,
-    include_status_pivot: bool = True,
-    include_campaign_pivot: bool = True,
-) -> None:
-    write_output_with_grouped_sheets(
-        rows,
-        output_file,
-        pivot_name=pivot_name,
-        separate_department=True,
-        separate_by_days=False,
-        include_status_pivot=include_status_pivot,
-        include_campaign_pivot=include_campaign_pivot,
-    )
 
 
 def _is_m_inhousemedia_campaign(campaign_value: Any) -> bool:
@@ -1407,24 +1644,51 @@ def build_output_files(
     )
 
     suffix = output_file.suffix or ".xlsx"
+
+    def _bucket_path(*parts: str) -> Path:
+        label = "_".join(part for part in parts if part)
+        if not label:
+            return output_file
+        return output_file.with_name(f"{output_file.stem}_{label}{suffix}")
+
     generated_outputs: list[Path] = []
     for label, bucket_rows, include_campaign_pivot in output_buckets:
-        bucket_output = (
-            output_file
-            if not label
-            else output_file.with_name(f"{output_file.stem}_{label}{suffix}")
-        )
-        if separate_department or separate_by_days:
-            write_output_with_grouped_sheets(
+        if separate_by_days and separate_department:
+            # One file per department, each with a Main Report tab + day tabs.
+            for department_key, department_rows in _split_rows_by_department(bucket_rows):
+                department_output = _bucket_path(
+                    label, _department_sheet_name(department_key)
+                )
+                write_output_with_day_sheets(
+                    department_rows,
+                    department_output,
+                    pivot_name=pivot_name,
+                    include_status_pivot=True,
+                    include_campaign_pivot=include_campaign_pivot,
+                )
+                generated_outputs.append(department_output)
+        elif separate_by_days:
+            bucket_output = _bucket_path(label)
+            write_output_with_day_sheets(
                 bucket_rows,
                 bucket_output,
                 pivot_name=pivot_name,
-                separate_department=separate_department,
-                separate_by_days=separate_by_days,
                 include_status_pivot=True,
                 include_campaign_pivot=include_campaign_pivot,
             )
+            generated_outputs.append(bucket_output)
+        elif separate_department:
+            bucket_output = _bucket_path(label)
+            write_output_with_department_sheets(
+                bucket_rows,
+                bucket_output,
+                pivot_name=pivot_name,
+                include_status_pivot=True,
+                include_campaign_pivot=include_campaign_pivot,
+            )
+            generated_outputs.append(bucket_output)
         else:
+            bucket_output = _bucket_path(label)
             write_output(
                 bucket_rows,
                 bucket_output,
@@ -1432,7 +1696,7 @@ def build_output_files(
                 include_status_pivot=True,
                 include_campaign_pivot=include_campaign_pivot,
             )
-        generated_outputs.append(bucket_output)
+            generated_outputs.append(bucket_output)
 
     return generated_outputs
 

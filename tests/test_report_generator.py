@@ -568,7 +568,91 @@ class ReportGeneratorTests(unittest.TestCase):
 
             self.assertEqual([path.name for path in outputs], ["My_report.xlsx"])
             workbook = load_workbook(root / "My_report.xlsx", data_only=False)
-            self.assertEqual(sorted(workbook.sheetnames), ["01", "22"])
+            self.assertEqual(workbook.sheetnames, ["Main Report", "01", "22"])
+
+            status_idx = PROGRAM_A_OUTPUT_COLUMNS.index("Status") + 1
+            comments_idx = PROGRAM_A_OUTPUT_COLUMNS.index("Comments") + 1
+            cb_idx = PROGRAM_A_OUTPUT_COLUMNS.index("CB") + 1
+            id_idx = PROGRAM_A_OUTPUT_COLUMNS.index("ID") + 1
+
+            main = workbook["Main Report"]
+            self.assertEqual([cell.value for cell in main[1]], PROGRAM_A_OUTPUT_COLUMNS)
+
+            day = workbook["01"]
+            # Non-linked columns stay static; the linked ones are formulas.
+            self.assertEqual(day.cell(2, id_idx).value, 111)
+            for linked_idx in (status_idx, cb_idx, comments_idx):
+                formula = day.cell(2, linked_idx).value
+                self.assertTrue(str(formula).startswith("="))
+                self.assertIn("'Main Report'!", str(formula))
+                self.assertIn("MATCH(111", str(formula))
+
+    def test_build_output_files_days_and_departments_make_separate_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            powerbi = root / "powerbi.xlsx"
+            crm = root / "crm.xlsx"
+            output = root / "My_report.xlsx"
+
+            _write_workbook(
+                powerbi,
+                POWERBI_COLUMNS,
+                [[111, "BrandA", "| first ;", 1], [222, "BrandA", "| second ;", 2]],
+            )
+            _write_workbook(
+                crm,
+                [*CRM_COLUMNS, "Date of Birth"],
+                [
+                    [
+                        "Lead",
+                        111,
+                        "7/1/2026  3:57:54 PM",
+                        "Jane Doe",
+                        "HQ / TR1 / EN / Opening / Murat",
+                        "Potential",
+                        "TR",
+                        "Campaign A",
+                        "Sub A",
+                        "Placement A",
+                        "Agent 1",
+                        "1990-01-01",
+                    ],
+                    [
+                        "Lead",
+                        222,
+                        "7/22/2026  9:00:00 AM",
+                        "John Doe",
+                        "HQ / CY1 / EN-TR / Opening / Housse",
+                        "Call Again",
+                        "CY",
+                        "Campaign B",
+                        "Sub B",
+                        "Placement B",
+                        "Agent 2",
+                        "1989-09-09",
+                    ],
+                ],
+            )
+
+            outputs = build_output_files(
+                powerbi_report=powerbi,
+                crm_files=[crm],
+                platforms=["BrandA"],
+                pivot_name="Status Pivot",
+                output_file=output,
+                separate_m_inhousemedia=False,
+                separate_department=True,
+                separate_by_days=True,
+            )
+
+            self.assertEqual(
+                sorted(path.name for path in outputs),
+                ["My_report_CY.xlsx", "My_report_TR.xlsx"],
+            )
+            tr_workbook = load_workbook(root / "My_report_TR.xlsx", data_only=False)
+            self.assertEqual(tr_workbook.sheetnames, ["Main Report", "01"])
+            cy_workbook = load_workbook(root / "My_report_CY.xlsx", data_only=False)
+            self.assertEqual(cy_workbook.sheetnames, ["Main Report", "22"])
 
     def test_missing_powerbi_columns_reports_file_name(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -701,7 +785,7 @@ class ProgramBCountryReportTests(unittest.TestCase):
                 ],
             )
 
-            program_b_country_report.build_output(
+            outputs = program_b_country_report.build_output(
                 powerbi_report=powerbi,
                 crm_files=[crm],
                 platforms=["BrandA"],
@@ -709,11 +793,81 @@ class ProgramBCountryReportTests(unittest.TestCase):
                 separate_by_days=True,
             )
 
+            self.assertEqual([path.name for path in outputs], [output.name])
             workbook = load_workbook(output, data_only=False)
-            self.assertIn("01", workbook.sheetnames)
-            self.assertIn("22", workbook.sheetnames)
-            self.assertIn("01-TR", workbook.sheetnames)
-            self.assertIn("22-DE", workbook.sheetnames)
+            self.assertEqual(workbook.sheetnames, ["Main Report", "01", "22"])
+
+            status_idx = OUTPUT_COLUMNS.index("Status") + 1
+            day = workbook["01"]
+            formula = day.cell(2, status_idx).value
+            self.assertTrue(str(formula).startswith("="))
+            self.assertIn("'Main Report'!", str(formula))
+
+    def test_build_output_days_and_departments_make_separate_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            powerbi = root / "powerbi.xlsx"
+            crm = root / "crm.xlsx"
+            output = root / "country_output.xlsx"
+
+            _write_workbook(
+                powerbi,
+                POWERBI_COLUMNS,
+                [
+                    [123, "BrandA", "| NA ;", 0],
+                    [456, "BrandA", "| VM ;", 5],
+                ],
+            )
+            _write_workbook(
+                crm,
+                CRM_COLUMNS,
+                [
+                    [
+                        "Lead",
+                        123,
+                        "7/1/2026  3:57:54 PM",
+                        "Jane Doe",
+                        "HQ / TR1 / EN / Opening / Murat",
+                        "Potential",
+                        "TR",
+                        "Campaign A",
+                        "Sub A",
+                        "Placement A",
+                        "Agent 1",
+                    ],
+                    [
+                        "Lead",
+                        456,
+                        "7/22/2026  9:00:00 AM",
+                        "Max Doe",
+                        "HQ / CY1 / EN-TR / Opening / Housse",
+                        "Call Again",
+                        "CY",
+                        "Campaign B",
+                        "Sub B",
+                        "Placement B",
+                        "Agent 2",
+                    ],
+                ],
+            )
+
+            outputs = program_b_country_report.build_output(
+                powerbi_report=powerbi,
+                crm_files=[crm],
+                platforms=["BrandA"],
+                output_file=output,
+                separate_department=True,
+                separate_by_days=True,
+            )
+
+            self.assertEqual(
+                sorted(path.name for path in outputs),
+                ["country_output_CY.xlsx", "country_output_TR.xlsx"],
+            )
+            tr_workbook = load_workbook(root / "country_output_TR.xlsx", data_only=False)
+            self.assertEqual(tr_workbook.sheetnames, ["Main Report", "01"])
+            cy_workbook = load_workbook(root / "country_output_CY.xlsx", data_only=False)
+            self.assertEqual(cy_workbook.sheetnames, ["Main Report", "22"])
 
 
 if __name__ == "__main__":
