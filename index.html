@@ -214,6 +214,20 @@
             </label>
           </div>
 
+          <div id="separate-by-days-row" class="toggle-row">
+            <input
+              id="separate-by-days"
+              class="toggle-input"
+              type="checkbox"
+              name="separate_by_days"
+              value="1"
+            />
+            <label class="toggle-label" for="separate-by-days">
+              <span class="toggle-switch"></span>
+              <span class="toggle-text">Separate by days</span>
+            </label>
+          </div>
+
           <div class="actions">
             <button id="submit-button" type="submit">Generate workbook</button>
             <p id="status" role="status" aria-live="polite"></p>
@@ -424,6 +438,8 @@
       const separateMInhouseToggle = document.querySelector("#separate-m-inhouse");
       const separateDepartmentRow = document.querySelector("#separate-department-row");
       const separateDepartmentToggle = document.querySelector("#separate-department");
+      const separateByDaysRow = document.querySelector("#separate-by-days-row");
+      const separateByDaysToggle = document.querySelector("#separate-by-days");
       const powerbiFieldset = document.querySelector("#powerbi-fieldset");
       const powerbiReportInput = document.querySelector("#powerbi-report-input");
       const monthlyCommentsFieldset = document.querySelector("#monthly-comments-fieldset");
@@ -562,6 +578,9 @@
 
         separateDepartmentRow.hidden = false;
         separateDepartmentToggle.disabled = false;
+
+        separateByDaysRow.hidden = false;
+        separateByDaysToggle.disabled = false;
       }
 
       const LARGE_FILE_CHUNK_SIZE = 3 * 1024 * 1024;
@@ -704,6 +723,10 @@
           "separate_department",
           separateDepartmentToggle.checked ? "1" : "0",
         );
+        formData.append(
+          "separate_by_days",
+          separateByDaysToggle.checked ? "1" : "0",
+        );
 
         crmEntries.forEach((entry, index) => {
           formData.append(`crm_file_${index}`, entry.crmFile, entry.crmFile.name);
@@ -753,6 +776,7 @@
           "X-Report-Crm-Count": String(crmCount),
           "X-Report-Separate-M-Inhouse": separateMInhouseToggle.checked ? "1" : "0",
           "X-Report-Separate-Department": separateDepartmentToggle.checked ? "1" : "0",
+          "X-Report-Separate-By-Days": separateByDaysToggle.checked ? "1" : "0",
         };
         if (monthlyUploadId) {
           headers["X-Report-Monthly-Comments-Upload-Id"] = monthlyUploadId;

@@ -33,7 +33,9 @@ from report_generator import (
     POWERBI_COLUMNS,
     STATUS_LIST,
     STATUS_COLORS,
+    _day_sheet_name,
     _department_sheet_name,
+    _split_rows_by_day,
     _split_rows_by_department,
     comments_for_status,
     extract_comments,
@@ -906,31 +908,65 @@ def _write_country_workbook(
         )
 
 
+def _grouped_country_buckets(
+    rows: list[dict[str, Any]],
+    *,
+    separate_department: bool,
+    separate_by_days: bool,
+) -> list[tuple[str, list[dict[str, Any]], bool]]:
+    if separate_department and separate_by_days:
+        buckets: list[tuple[str, list[dict[str, Any]], bool]] = []
+        for department_key, department_rows in _split_rows_by_department(rows):
+            department_label = _department_sheet_name(department_key)
+            for day_key, day_rows in _split_rows_by_day(department_rows):
+                buckets.append(
+                    (
+                        f"{department_label} {day_key}",
+                        day_rows,
+                        department_key == "general",
+                    )
+                )
+        return buckets
+
+    if separate_department:
+        return [
+            (_department_sheet_name(key), group_rows, key == "general")
+            for key, group_rows in _split_rows_by_department(rows)
+        ]
+
+    return [
+        (_day_sheet_name(key), group_rows, key == "general")
+        for key, group_rows in _split_rows_by_day(rows)
+    ]
+
+
 def write_output(
     rows: list[dict[str, Any]],
     output_file: Path,
     separate_department: bool = False,
+    separate_by_days: bool = False,
 ) -> None:
     workbook = Workbook()
     used_sheet_names: set[str] = set()
     used_table_names: set[str] = set()
 
-    if separate_department:
+    if separate_department or separate_by_days:
         workbook.remove(workbook.active)
-        for department_key, department_rows in _split_rows_by_department(rows):
-            department_label = _department_sheet_name(department_key)
+        for group_label, group_rows, is_general in _grouped_country_buckets(
+            rows,
+            separate_department=separate_department,
+            separate_by_days=separate_by_days,
+        ):
             _write_country_workbook(
                 workbook,
-                department_rows,
+                group_rows,
                 used_sheet_names=used_sheet_names,
                 used_table_names=used_table_names,
-                main_sheet_title=department_label,
+                main_sheet_title=group_label,
                 main_pivot_label=(
-                    MAIN_REPORT_PIVOT_LABEL
-                    if department_key == "general"
-                    else department_label
+                    MAIN_REPORT_PIVOT_LABEL if is_general else group_label
                 ),
-                country_sheet_prefix=f"{department_label}-",
+                country_sheet_prefix=f"{group_label}-",
             )
     else:
         ws_main = workbook.active
@@ -976,6 +1012,7 @@ def build_output(
     powerbi_sheet: str | None = None,
     crm_sheet: str | None = None,
     separate_department: bool = False,
+    separate_by_days: bool = False,
 ) -> None:
     if len(crm_files) != len(platforms):
         raise ValueError("Each CRM file must have exactly one platform name.")
@@ -994,7 +1031,12 @@ def build_output(
     for crm_file, platform in zip(crm_files, platforms):
         all_rows.extend(read_crm_rows(crm_file, platform, comments_lookup, crm_sheet))
 
-    write_output(all_rows, output_file, separate_department=separate_department)
+    write_output(
+        all_rows,
+        output_file,
+        separate_department=separate_department,
+        separate_by_days=separate_by_days,
+    )
 
 
 def prompt(message: str, allow_empty: bool = False) -> str:

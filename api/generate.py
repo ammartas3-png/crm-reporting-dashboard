@@ -1591,7 +1591,7 @@ class handler(BaseHTTPRequestHandler):
             "Access-Control-Allow-Headers",
             "Content-Type, X-Report-Pivot-Name, X-Report-Program, X-Report-Crm-Count, "
             "X-Report-Monthly-Comments-Upload-Id, X-Report-Separate-M-Inhouse, "
-            "X-Report-Separate-Department, X-Report-Output-File",
+            "X-Report-Separate-Department, X-Report-Separate-By-Days, X-Report-Output-File",
         )
         self.end_headers()
 
@@ -1686,10 +1686,14 @@ class handler(BaseHTTPRequestHandler):
                     separate_department = _resolve_toggle(
                         self, form, "separate_department"
                     )
+                    separate_by_days = _resolve_toggle(
+                        self, form, "separate_by_days"
+                    )
                     if program == PROGRAM_B:
                         program_b_country_report.build_output(
                             **common_args,
                             separate_department=separate_department,
+                            separate_by_days=separate_by_days,
                         )
                         response_bytes = output_path.read_bytes()
                         response_content_type = XLSX_CONTENT_TYPE
@@ -1705,6 +1709,7 @@ class handler(BaseHTTPRequestHandler):
                             pivot_name=pivot_name,
                             separate_m_inhousemedia=separate_m_inhousemedia,
                             separate_department=separate_department,
+                            separate_by_days=separate_by_days,
                         )
                         if len(generated_outputs) == 1:
                             only_output = generated_outputs[0]

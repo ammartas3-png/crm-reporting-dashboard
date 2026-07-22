@@ -6,6 +6,7 @@ optional command-line entry point.
 
 from __future__ import annotations
 
+import datetime as _dt
 import re
 import sys
 from collections import defaultdict
@@ -994,6 +995,18 @@ def _sanitize_sheet_title(name: str) -> str:
     return (cleaned or "Sheet")[:31]
 
 
+def _unique_sheet_title(name: str, used_titles: set[str]) -> str:
+    base = _sanitize_sheet_title(name)
+    candidate = base
+    counter = 2
+    while candidate in used_titles:
+        suffix = f" ({counter})"
+        candidate = f"{base[: 31 - len(suffix)]}{suffix}"
+        counter += 1
+    used_titles.add(candidate)
+    return candidate
+
+
 def _department_sheet_name(department_key: str) -> str:
     return _sanitize_sheet_title(department_key)
 
@@ -1163,19 +1176,56 @@ def write_output(
     workbook.save(output_file)
 
 
-def write_output_with_department_sheets(
+def _grouped_sheet_buckets(
+    rows: list[dict[str, Any]],
+    *,
+    separate_department: bool,
+    separate_by_days: bool,
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    if separate_department and separate_by_days:
+        buckets: list[tuple[str, list[dict[str, Any]]]] = []
+        for department_key, department_rows in _split_rows_by_department(rows):
+            department_label = _department_sheet_name(department_key)
+            for day_key, day_rows in _split_rows_by_day(department_rows):
+                buckets.append((f"{department_label} {day_key}", day_rows))
+        return buckets
+
+    if separate_department:
+        return [
+            (_department_sheet_name(department_key), department_rows)
+            for department_key, department_rows in _split_rows_by_department(rows)
+        ]
+
+    if separate_by_days:
+        return [
+            (_day_sheet_name(day_key), day_rows)
+            for day_key, day_rows in _split_rows_by_day(rows)
+        ]
+
+    return [("CRM Output", rows)]
+
+
+def write_output_with_grouped_sheets(
     rows: list[dict[str, Any]],
     output_file: Path,
     pivot_name: str,
+    *,
+    separate_department: bool = False,
+    separate_by_days: bool = False,
     include_status_pivot: bool = True,
     include_campaign_pivot: bool = True,
 ) -> None:
-    department_buckets = _split_rows_by_department(rows)
+    buckets = _grouped_sheet_buckets(
+        rows,
+        separate_department=separate_department,
+        separate_by_days=separate_by_days,
+    )
     workbook = Workbook()
+    used_titles: set[str] = set()
     first_sheet = True
 
-    for department_key, department_rows in department_buckets:
-        sheet_name = _department_sheet_name(department_key)
+    for raw_sheet_name, sheet_rows in buckets:
+        sheet_name = _unique_sheet_title(raw_sheet_name, used_titles)
         if first_sheet:
             ws_data = workbook.active
             ws_data.title = sheet_name
@@ -1185,7 +1235,7 @@ def write_output_with_department_sheets(
 
         _write_output_sheet(
             ws_data,
-            department_rows,
+            sheet_rows,
             sheet_name=sheet_name,
             pivot_name=pivot_name,
             table_display_name=_table_display_name(sheet_name),
@@ -1195,6 +1245,24 @@ def write_output_with_department_sheets(
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output_file)
+
+
+def write_output_with_department_sheets(
+    rows: list[dict[str, Any]],
+    output_file: Path,
+    pivot_name: str,
+    include_status_pivot: bool = True,
+    include_campaign_pivot: bool = True,
+) -> None:
+    write_output_with_grouped_sheets(
+        rows,
+        output_file,
+        pivot_name=pivot_name,
+        separate_department=True,
+        separate_by_days=False,
+        include_status_pivot=include_status_pivot,
+        include_campaign_pivot=include_campaign_pivot,
+    )
 
 
 def _is_m_inhousemedia_campaign(campaign_value: Any) -> bool:
@@ -1240,6 +1308,50 @@ def _split_rows_by_department(
     ]
 
 
+def _extract_day_code(created_value: Any) -> str | None:
+    """Return the two-digit day-of-month from a "Created" cell value."""
+    if created_value is None:
+        return None
+    if isinstance(created_value, (_dt.datetime, _dt.date)):
+        return f"{created_value.day:02d}"
+
+    text = str(created_value).strip()
+    if not text:
+        return None
+
+    iso_match = re.match(r"^(\d{4})[/\-.](\d{1,2})[/\-.](\d{1,2})", text)
+    if iso_match:
+        return f"{int(iso_match.group(3)):02d}"
+
+    us_match = re.match(r"^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})", text)
+    if us_match:
+        return f"{int(us_match.group(2)):02d}"
+
+    return None
+
+
+def _day_sheet_name(day_key: str) -> str:
+    return _sanitize_sheet_title(day_key)
+
+
+def _split_rows_by_day(
+    rows: list[dict[str, Any]],
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    by_day: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        day_code = _extract_day_code(row.get("Created", ""))
+        by_day[day_code or "general"].append(row)
+
+    return [
+        (day_key, by_day[day_key])
+        for day_key in sorted(
+            by_day.keys(),
+            key=lambda key: (key == "general", key),
+        )
+        if by_day[day_key]
+    ]
+
+
 def _partition_rows_for_outputs(
     all_rows: list[dict[str, Any]],
     *,
@@ -1268,6 +1380,7 @@ def build_output_files(
     crm_sheet: str | None = None,
     separate_m_inhousemedia: bool = True,
     separate_department: bool = False,
+    separate_by_days: bool = False,
 ) -> list[Path]:
     if len(crm_files) != len(platforms):
         raise ValueError("Each CRM file must have exactly one platform name.")
@@ -1301,11 +1414,13 @@ def build_output_files(
             if not label
             else output_file.with_name(f"{output_file.stem}_{label}{suffix}")
         )
-        if separate_department:
-            write_output_with_department_sheets(
+        if separate_department or separate_by_days:
+            write_output_with_grouped_sheets(
                 bucket_rows,
                 bucket_output,
                 pivot_name=pivot_name,
+                separate_department=separate_department,
+                separate_by_days=separate_by_days,
                 include_status_pivot=True,
                 include_campaign_pivot=include_campaign_pivot,
             )
