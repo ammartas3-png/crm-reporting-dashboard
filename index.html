@@ -239,6 +239,7 @@
                 <option value="Modmount">Modmount</option>
                 <option value="Skadeva">Skadeva</option>
                 <option value="Fxnovus">Fxnovus</option>
+                <option value="EnvessaMarkets">EnvessaMarkets</option>
               </select>
             </label>
 
@@ -842,8 +843,39 @@
           : programConfig[selectedProgram()].fallbackDownload;
       }
 
+      const MONTHLY_COMMENTS_PASSWORD = "59685968";
+      let lastSelectedProgram = selectedProgram();
+
+      function handleProgramChange() {
+        const selected = selectedProgram();
+
+        if (selected === "program_c") {
+          const entered = window.prompt(
+            "Enter the password to use Monthly all comments:",
+          );
+          if (entered !== MONTHLY_COMMENTS_PASSWORD) {
+            const previous = document.querySelector(
+              `input[name="program"][value="${lastSelectedProgram}"]`,
+            );
+            if (previous) {
+              previous.checked = true;
+            }
+            syncProgramFields();
+            setStatus(
+              "Wrong password. Monthly all comments was not selected.",
+              "error",
+            );
+            return;
+          }
+          setStatus("", "");
+        }
+
+        lastSelectedProgram = selected;
+        syncProgramFields();
+      }
+
       programInputs.forEach((input) => {
-        input.addEventListener("change", syncProgramFields);
+        input.addEventListener("change", handleProgramChange);
       });
       pivotName.addEventListener("input", syncPivotToForm);
       pivotName.addEventListener("change", syncPivotToForm);
