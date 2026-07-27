@@ -70,9 +70,9 @@
               <label class="program-card">
                 <input type="radio" name="program" value="program_c" />
                 <span>
-                  <strong>Monthly all comments</strong>
+                  <strong>New report</strong>
                   <small>
-                    Monthly reports which need all the comments
+                    Under Developement !!
                   </small>
                 </span>
               </label>
@@ -875,7 +875,7 @@
 
         if (selected === "program_c") {
           const entered = window.prompt(
-            "Enter the password to use Monthly all comments:",
+            "Enter the password to use New report:",
           );
           if (entered !== MONTHLY_COMMENTS_PASSWORD) {
             const previous = document.querySelector(
@@ -886,7 +886,7 @@
             }
             syncProgramFields();
             setStatus(
-              "Wrong password. Monthly all comments was not selected.",
+              "Wrong password. New report was not selected.",
               "error",
             );
             return;
