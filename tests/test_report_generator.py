@@ -654,6 +654,79 @@ class ReportGeneratorTests(unittest.TestCase):
             cy_workbook = load_workbook(root / "My_report_CY.xlsx", data_only=False)
             self.assertEqual(cy_workbook.sheetnames, ["Main Report", "22"])
 
+    def test_build_output_files_applies_kyc_comments_to_telemarketing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            powerbi = root / "powerbi.xlsx"
+            crm = root / "crm.xlsx"
+            output = root / "kyc_report.xlsx"
+
+            _write_workbook(powerbi, POWERBI_COLUMNS, [[111, "Fintana", "| x ;", 1]])
+            _write_workbook(
+                crm,
+                [*CRM_COLUMNS, "Date of Birth"],
+                [
+                    [
+                        "Depositor",
+                        12345,
+                        "2026-07-01",
+                        "Jane Doe",
+                        "Sales",
+                        "",
+                        "TR",
+                        "Campaign A",
+                        "Sub A",
+                        "Placement A",
+                        "Agent 1",
+                        "1990-01-01",
+                    ],
+                    [
+                        "Depositor",
+                        999,
+                        "2026-07-02",
+                        "John Doe",
+                        "Sales",
+                        "",
+                        "TR",
+                        "Campaign B",
+                        "Sub B",
+                        "Placement B",
+                        "Agent 2",
+                        "1989-09-09",
+                    ],
+                ],
+            )
+
+            lookup = {("12345", "fintana"): "KYC done"}
+            build_output_files(
+                powerbi_report=powerbi,
+                crm_files=[crm],
+                platforms=["Fintana"],
+                pivot_name="Status Pivot",
+                output_file=output,
+                separate_m_inhousemedia=False,
+                telemarketing_kyc_lookup=lookup,
+            )
+
+            workbook = load_workbook(output, data_only=False)
+            ws = workbook["CRM Output"]
+            id_col = PROGRAM_A_OUTPUT_COLUMNS.index("ID") + 1
+            comments_col = PROGRAM_A_OUTPUT_COLUMNS.index("Comments") + 1
+            status_col = PROGRAM_A_OUTPUT_COLUMNS.index("Status") + 1
+
+            comment_by_id = {}
+            for row_idx in range(2, ws.max_row + 1):
+                row_id = ws.cell(row_idx, id_col).value
+                if row_id in (None, ""):
+                    continue
+                comment_by_id[str(row_id)] = (
+                    ws.cell(row_idx, status_col).value,
+                    ws.cell(row_idx, comments_col).value,
+                )
+
+            self.assertEqual(comment_by_id["12345"], ("Telemarketing", "KYC done"))
+            self.assertEqual(comment_by_id["999"], ("Telemarketing", "No KYC found"))
+
     def test_missing_powerbi_columns_reports_file_name(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "bad_powerbi.xlsx"

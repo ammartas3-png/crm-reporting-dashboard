@@ -957,6 +957,8 @@
             throw new Error(message);
           }
 
+          const warning = response.headers.get("X-Report-Warning");
+
           const blob = await response.blob();
           const filename = filenameFromDisposition(
             response.headers.get("content-disposition"),
@@ -969,7 +971,11 @@
           link.click();
           link.remove();
           URL.revokeObjectURL(url);
-          setStatus("Done. Your workbook download has started.", "success");
+          if (warning) {
+            setStatus(warning, "error");
+          } else {
+            setStatus("Done. Your workbook download has started.", "success");
+          }
         } catch (error) {
           setStatus(error.message, "error");
         } finally {

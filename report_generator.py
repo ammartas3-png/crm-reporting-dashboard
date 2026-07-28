@@ -19,6 +19,8 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
+import kyc_lookup
+
 
 CRM_COLUMNS = [
     "Customer Type",
@@ -1618,6 +1620,7 @@ def build_output_files(
     separate_m_inhousemedia: bool = True,
     separate_department: bool = False,
     separate_by_days: bool = False,
+    telemarketing_kyc_lookup: dict[tuple[str, str], str] | None = None,
 ) -> list[Path]:
     if len(crm_files) != len(platforms):
         raise ValueError("Each CRM file must have exactly one platform name.")
@@ -1638,6 +1641,7 @@ def build_output_files(
         all_rows.extend(file_rows)
 
     all_rows.sort(key=lambda row: normalize_status(row.get("Status", "")))
+    kyc_lookup.apply_kyc_comments(all_rows, telemarketing_kyc_lookup)
     output_buckets = _partition_rows_for_outputs(
         all_rows,
         separate_m_inhousemedia=separate_m_inhousemedia,

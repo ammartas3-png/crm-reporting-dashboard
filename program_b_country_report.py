@@ -24,6 +24,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
+import kyc_lookup
 from report_generator import (
     CRM_COLUMNS,
     NO_ANSWER_COLORS,
@@ -1203,6 +1204,7 @@ def build_output(
     crm_sheet: str | None = None,
     separate_department: bool = False,
     separate_by_days: bool = False,
+    telemarketing_kyc_lookup: dict[tuple[str, str], str] | None = None,
 ) -> list[Path]:
     if len(crm_files) != len(platforms):
         raise ValueError("Each CRM file must have exactly one platform name.")
@@ -1220,6 +1222,8 @@ def build_output(
 
     for crm_file, platform in zip(crm_files, platforms):
         all_rows.extend(read_crm_rows(crm_file, platform, comments_lookup, crm_sheet))
+
+    kyc_lookup.apply_kyc_comments(all_rows, telemarketing_kyc_lookup)
 
     if separate_by_days and separate_department:
         # One file per department, each with a Main Report tab + day tabs.
