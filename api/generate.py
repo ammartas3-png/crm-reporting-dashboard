@@ -30,6 +30,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import cr_maker  # noqa: E402
+import kyc_lookup  # noqa: E402
 import lead_splitter  # noqa: E402
 import program_a_report  # noqa: E402
 import program_b_country_report  # noqa: E402
@@ -1596,6 +1597,7 @@ class handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self) -> None:
+        response_warning = ""
         try:
             form = _parse_form(self)
             report_action = _field_text_with_query_fallback(self, form, "report_action")
@@ -1689,11 +1691,24 @@ class handler(BaseHTTPRequestHandler):
                     separate_by_days = _resolve_toggle(
                         self, form, "separate_by_days"
                     )
+
+                    telemarketing_kyc_lookup = None
+                    try:
+                        telemarketing_kyc_lookup = kyc_lookup.fetch_kyc_comment_lookup(
+                            now=datetime.now(timezone.utc)
+                        )
+                    except kyc_lookup.KycMonthSheetNotFound:
+                        response_warning = kyc_lookup.KYC_MONTH_SHEET_NOT_FOUND_WARNING
+                        telemarketing_kyc_lookup = None
+                    except Exception:
+                        telemarketing_kyc_lookup = None
+
                     if program == PROGRAM_B:
                         generated_outputs = program_b_country_report.build_output(
                             **common_args,
                             separate_department=separate_department,
                             separate_by_days=separate_by_days,
+                            telemarketing_kyc_lookup=telemarketing_kyc_lookup,
                         )
                         if not generated_outputs or len(generated_outputs) == 1:
                             only_output = (
@@ -1721,6 +1736,7 @@ class handler(BaseHTTPRequestHandler):
                             separate_m_inhousemedia=separate_m_inhousemedia,
                             separate_department=separate_department,
                             separate_by_days=separate_by_days,
+                            telemarketing_kyc_lookup=telemarketing_kyc_lookup,
                         )
                         if len(generated_outputs) == 1:
                             only_output = generated_outputs[0]
@@ -1811,5 +1827,11 @@ class handler(BaseHTTPRequestHandler):
         )
         self.send_header("Content-Length", str(len(response_bytes)))
         self.send_header("Access-Control-Allow-Origin", "*")
+        if response_warning:
+            self.send_header("X-Report-Warning", response_warning)
+            self.send_header(
+                "Access-Control-Expose-Headers",
+                "X-Report-Warning, Content-Disposition",
+            )
         self.end_headers()
         self.wfile.write(response_bytes)
