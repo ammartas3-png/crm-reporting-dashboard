@@ -349,7 +349,9 @@ def _resolve_pivot_name(
 def _discover_crm_indices(form: cgi.FieldStorage) -> list[int]:
     indices: set[int] = set()
     for key in form.keys():
-        match = re.fullmatch(r"crm_file_(\d+)", str(key))
+        match = re.fullmatch(r"crm_file_(\d+)", str(key)) or re.fullmatch(
+            r"crm_upload_id_(\d+)", str(key)
+        )
         if match:
             indices.add(int(match.group(1)))
     return sorted(indices)
@@ -358,17 +360,19 @@ def _discover_crm_indices(form: cgi.FieldStorage) -> list[int]:
 def _collect_crm_uploads(
     form: cgi.FieldStorage,
     directory: Path,
-) -> tuple[list[Path], list[str]]:
+) -> tuple[list[Path], list[str], list[str]]:
     indices = _discover_crm_indices(form)
     if not indices:
         raise ValueError("At least one CRM file is required.")
 
     crm_files: list[Path] = []
     platforms: list[str] = []
+    crm_upload_ids: list[str] = []
     for index in indices:
+        upload_id = _field_text(form, f"crm_upload_id_{index}")
         crm_field = _field(form, f"crm_file_{index}")
         platform = _field_text(form, f"platform_{index}")
-        has_upload = _has_upload(crm_field)
+        has_upload = bool(upload_id) or _has_upload(crm_field)
         if not has_upload and not platform:
             continue
         if not has_upload:
@@ -377,17 +381,28 @@ def _collect_crm_uploads(
             raise ValueError(
                 f"Platform name for CRM file #{index + 1} is required."
             )
-        crm_path = _save_upload(
-            crm_field,
-            directory,
-            f"CRM file #{index + 1}",
-        )
+
+        if upload_id:
+            try:
+                crm_path = resolve_uploaded_file(upload_id)
+            except ValueError as exc:
+                raise ValueError(
+                    f"CRM file #{index + 1} upload was not found on the server. "
+                    "Please refresh the page, re-select the file, and try again."
+                ) from exc
+            crm_upload_ids.append(upload_id)
+        else:
+            crm_path = _save_upload(
+                crm_field,
+                directory,
+                f"CRM file #{index + 1}",
+            )
         crm_files.append(crm_path)
         platforms.append(platform)
 
     if not crm_files:
         raise ValueError("At least one CRM file is required.")
-    return crm_files, platforms
+    return crm_files, platforms, crm_upload_ids
 
 
 def _resolve_monthly_comments_upload_id(
@@ -424,6 +439,35 @@ def _resolve_monthly_comments_path(
         )
 
     raise ValueError("Please upload the monthly comments .xlsx file.")
+
+
+def _resolve_powerbi_upload_id(
+    handler: BaseHTTPRequestHandler,
+    form: cgi.FieldStorage,
+) -> str:
+    return _field_text_with_query_fallback(handler, form, "powerbi_upload_id")
+
+
+def _resolve_powerbi_path(
+    handler: BaseHTTPRequestHandler,
+    form: cgi.FieldStorage,
+    directory: Path,
+    upload_id: str,
+) -> Path:
+    if upload_id:
+        try:
+            return resolve_uploaded_file(upload_id)
+        except ValueError as exc:
+            raise ValueError(
+                "PowerBI upload was not found on the server. "
+                "Please refresh the page, re-select the PowerBI file, and try again."
+            ) from exc
+
+    return _save_upload(
+        _field(form, "powerbi_report"),
+        directory,
+        "PowerBI report",
+    )
 
 
 def _resolve_toggle(
@@ -1591,8 +1635,9 @@ class handler(BaseHTTPRequestHandler):
         self.send_header(
             "Access-Control-Allow-Headers",
             "Content-Type, X-Report-Pivot-Name, X-Report-Program, X-Report-Crm-Count, "
-            "X-Report-Monthly-Comments-Upload-Id, X-Report-Separate-M-Inhouse, "
-            "X-Report-Separate-Department, X-Report-Separate-By-Days, X-Report-Output-File",
+            "X-Report-Monthly-Comments-Upload-Id, X-Report-Powerbi-Upload-Id, "
+            "X-Report-Separate-M-Inhouse, X-Report-Separate-Department, "
+            "X-Report-Separate-By-Days, X-Report-Output-File",
         )
         self.end_headers()
 
@@ -1648,6 +1693,7 @@ class handler(BaseHTTPRequestHandler):
                         raise ValueError("Pivot table name is required for this report program.")
 
                     powerbi_path: Path | None = None
+                    powerbi_upload_id = ""
                     monthly_comments_path: Path | None = None
                     if program == PROGRAM_C:
                         monthly_comments_path = _resolve_monthly_comments_path(
@@ -1657,13 +1703,17 @@ class handler(BaseHTTPRequestHandler):
                             monthly_comments_upload_id,
                         )
                     else:
-                        powerbi_path = _save_upload(
-                            _field(form, "powerbi_report"),
+                        powerbi_upload_id = _resolve_powerbi_upload_id(self, form)
+                        powerbi_path = _resolve_powerbi_path(
+                            self,
+                            form,
                             tmp_path,
-                            "PowerBI report",
+                            powerbi_upload_id,
                         )
 
-                    crm_files, platforms = _collect_crm_uploads(form, tmp_path)
+                    crm_files, platforms, crm_upload_ids = _collect_crm_uploads(
+                        form, tmp_path
+                    )
 
                     default_output = {
                         PROGRAM_B: PROGRAM_B_OUTPUT_FILENAME,
@@ -1749,6 +1799,10 @@ class handler(BaseHTTPRequestHandler):
                             response_content_type = "application/zip"
                     if monthly_comments_upload_id:
                         cleanup_upload(monthly_comments_upload_id)
+                    if powerbi_upload_id:
+                        cleanup_upload(powerbi_upload_id)
+                    for crm_upload_id in crm_upload_ids:
+                        cleanup_upload(crm_upload_id)
                 elif app == APP_LEAD_SPLITTER:
                     lead_input = _save_upload(
                         _field(form, "lead_input"),

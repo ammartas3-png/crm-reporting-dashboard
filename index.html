@@ -585,9 +585,18 @@
       }
 
       const LARGE_FILE_CHUNK_SIZE = 3 * 1024 * 1024;
-      const DIRECT_MONTHLY_UPLOAD_LIMIT = 3 * 1024 * 1024;
+      // Single-file cap and total inline budget kept well under Vercel's ~4.5MB
+      // request limit. Anything bigger (or that would exceed the running budget)
+      // is uploaded in chunks and referenced by an upload id instead.
+      const DIRECT_UPLOAD_LIMIT = 3 * 1024 * 1024;
+      const INLINE_REQUEST_BUDGET = 3 * 1024 * 1024;
 
-      async function uploadLargeFileInChunks(file, onProgress, metadata = {}) {
+      async function uploadLargeFileInChunks(
+        file,
+        onProgress,
+        metadata = {},
+        fileLabel = "file",
+      ) {
         const uploadId = crypto.randomUUID();
         const totalChunks = Math.max(1, Math.ceil(file.size / LARGE_FILE_CHUNK_SIZE));
 
@@ -625,7 +634,7 @@
             throw new Error(
               await readErrorMessage(
                 response,
-                `Failed to upload monthly comments chunk ${chunkIndex + 1} of ${totalChunks}.`,
+                `Failed to upload ${fileLabel} chunk ${chunkIndex + 1} of ${totalChunks}.`,
               ),
             );
           }
@@ -687,28 +696,59 @@
           }
         }
 
+        // Keep the generate request body small: any file that is large (or that
+        // would push the request over the inline budget) is uploaded in chunks
+        // first and referenced by an upload id. Small files stay inline.
+        let inlineBytes = 0;
+        async function uploadOrInline(file, label, metadata) {
+          if (!file) {
+            return "";
+          }
+          if (
+            file.size <= DIRECT_UPLOAD_LIMIT &&
+            inlineBytes + file.size <= INLINE_REQUEST_BUDGET
+          ) {
+            inlineBytes += file.size;
+            return "";
+          }
+          setStatus(`Uploading ${label} in parts...`, "pending");
+          return uploadLargeFileInChunks(
+            file,
+            (done, total) => {
+              setStatus(`Uploading ${label} (${done}/${total})...`, "pending");
+            },
+            metadata,
+            label,
+          );
+        }
+
         let monthlyUploadId = "";
         let monthlyFile = null;
-
         if (program === "program_c") {
           monthlyFile = monthlyCommentsInput.files[0];
           if (!monthlyFile) {
             throw new Error("Browse and select the monthly comments .xlsx file.");
           }
+          monthlyUploadId = await uploadOrInline(
+            monthlyFile,
+            "monthly comments file",
+            { pivotName: pivotValue, program, crmCount: String(crmEntries.length) },
+          );
+        }
 
-          if (monthlyFile.size > DIRECT_MONTHLY_UPLOAD_LIMIT) {
-            setStatus("Uploading monthly comments file in parts...", "pending");
-            monthlyUploadId = await uploadLargeFileInChunks(
-              monthlyFile,
-              (done, total) => {
-                setStatus(
-                  `Uploading monthly comments file (${done}/${total})...`,
-                  "pending",
-                );
-              },
-              { pivotName: pivotValue, program, crmCount: String(crmEntries.length) },
-            );
-          }
+        const powerbiFile =
+          program === "program_a" || program === "program_b"
+            ? powerbiReportInput.files[0] || null
+            : null;
+        const powerbiUploadId = await uploadOrInline(powerbiFile, "PowerBI file", {});
+
+        const crmUploadIds = [];
+        for (const [index, entry] of crmEntries.entries()) {
+          crmUploadIds[index] = await uploadOrInline(
+            entry.crmFile,
+            `CRM file #${index + 1}`,
+            {},
+          );
         }
 
         const formData = new FormData();
@@ -730,8 +770,12 @@
         );
 
         crmEntries.forEach((entry, index) => {
-          formData.append(`crm_file_${index}`, entry.crmFile, entry.crmFile.name);
           formData.append(`platform_${index}`, entry.platform);
+          if (crmUploadIds[index]) {
+            formData.append(`crm_upload_id_${index}`, crmUploadIds[index]);
+          } else {
+            formData.append(`crm_file_${index}`, entry.crmFile, entry.crmFile.name);
+          }
         });
 
         const outputValue = outputFile.value.trim();
@@ -740,8 +784,9 @@
         }
 
         if (program === "program_a" || program === "program_b") {
-          const powerbiFile = powerbiReportInput.files[0];
-          if (powerbiFile) {
+          if (powerbiUploadId) {
+            formData.append("powerbi_upload_id", powerbiUploadId);
+          } else if (powerbiFile) {
             formData.append("powerbi_report", powerbiFile, powerbiFile.name);
           }
         }
@@ -760,6 +805,7 @@
           pivotValue,
           crmCount: crmEntries.length,
           monthlyUploadId,
+          powerbiUploadId,
           outputValue,
         };
       }
@@ -769,6 +815,7 @@
         pivotValue,
         crmCount,
         monthlyUploadId,
+        powerbiUploadId,
         outputValue,
       ) {
         const headers = {
@@ -781,6 +828,9 @@
         };
         if (monthlyUploadId) {
           headers["X-Report-Monthly-Comments-Upload-Id"] = monthlyUploadId;
+        }
+        if (powerbiUploadId) {
+          headers["X-Report-Powerbi-Upload-Id"] = powerbiUploadId;
         }
         if (outputValue) {
           headers["X-Report-Output-File"] = encodeURIComponent(outputValue);
@@ -928,6 +978,7 @@
             pivotValue,
             crmCount,
             monthlyUploadId,
+            powerbiUploadId,
             outputValue,
           } = await buildReportFormData();
           const generateUrl = new URL("/api/generate", window.location.href);
@@ -940,6 +991,9 @@
               monthlyUploadId,
             );
           }
+          if (powerbiUploadId) {
+            generateUrl.searchParams.set("powerbi_upload_id", powerbiUploadId);
+          }
           const response = await fetch(generateUrl, {
             method: "POST",
             headers: buildGenerateRequestHeaders(
@@ -947,6 +1001,7 @@
               pivotValue,
               crmCount,
               monthlyUploadId,
+              powerbiUploadId,
               outputValue,
             ),
             body: formData,

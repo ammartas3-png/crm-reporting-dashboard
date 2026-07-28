@@ -134,13 +134,41 @@ class GenerateFormFieldTests(unittest.TestCase):
             [("crm_file_0", "ZA July.xlsx", _minimal_xlsx())],
         )
         with tempfile.TemporaryDirectory() as temp_dir:
-            crm_files, platforms = generate._collect_crm_uploads(
+            crm_files, platforms, crm_upload_ids = generate._collect_crm_uploads(
                 form,
                 Path(temp_dir),
             )
             self.assertEqual(len(crm_files), 1)
             self.assertEqual(platforms, ["Fintana"])
             self.assertTrue(crm_files[0].exists())
+            self.assertEqual(crm_upload_ids, [])
+
+    def test_discover_crm_indices_includes_upload_ids(self) -> None:
+        form = _multipart_form(
+            {"platform_0": "Fintana", "crm_upload_id_0": "abc-123"}
+        )
+        self.assertEqual(generate._discover_crm_indices(form), [0])
+
+    def test_collect_crm_uploads_resolves_chunked_upload(self) -> None:
+        from api.file_uploads import cleanup_upload, save_chunk
+
+        upload_id = "test-crm-upload-0"
+        save_chunk(upload_id, 0, 1, "crm.xlsx", _minimal_xlsx())
+        try:
+            form = _multipart_form(
+                {"platform_0": "Fintana", "crm_upload_id_0": upload_id}
+            )
+            with tempfile.TemporaryDirectory() as temp_dir:
+                crm_files, platforms, crm_upload_ids = generate._collect_crm_uploads(
+                    form,
+                    Path(temp_dir),
+                )
+            self.assertEqual(len(crm_files), 1)
+            self.assertTrue(crm_files[0].exists())
+            self.assertEqual(platforms, ["Fintana"])
+            self.assertEqual(crm_upload_ids, [upload_id])
+        finally:
+            cleanup_upload(upload_id)
 
     def test_monthly_upload_id_from_query_string(self) -> None:
         form = _multipart_form({})
