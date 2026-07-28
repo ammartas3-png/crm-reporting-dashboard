@@ -586,8 +586,14 @@
 
       const LARGE_FILE_CHUNK_SIZE = 3 * 1024 * 1024;
       const DIRECT_MONTHLY_UPLOAD_LIMIT = 3 * 1024 * 1024;
+      const DIRECT_POWERBI_UPLOAD_LIMIT = 3 * 1024 * 1024;
 
-      async function uploadLargeFileInChunks(file, onProgress, metadata = {}) {
+      async function uploadLargeFileInChunks(
+        file,
+        onProgress,
+        metadata = {},
+        fileLabel = "file",
+      ) {
         const uploadId = crypto.randomUUID();
         const totalChunks = Math.max(1, Math.ceil(file.size / LARGE_FILE_CHUNK_SIZE));
 
@@ -625,7 +631,7 @@
             throw new Error(
               await readErrorMessage(
                 response,
-                `Failed to upload monthly comments chunk ${chunkIndex + 1} of ${totalChunks}.`,
+                `Failed to upload ${fileLabel} chunk ${chunkIndex + 1} of ${totalChunks}.`,
               ),
             );
           }
@@ -707,8 +713,27 @@
                 );
               },
               { pivotName: pivotValue, program, crmCount: String(crmEntries.length) },
+              "monthly comments file",
             );
           }
+        }
+
+        let powerbiUploadId = "";
+        const powerbiFile =
+          program === "program_a" || program === "program_b"
+            ? powerbiReportInput.files[0] || null
+            : null;
+
+        if (powerbiFile && powerbiFile.size > DIRECT_POWERBI_UPLOAD_LIMIT) {
+          setStatus("Uploading PowerBI file in parts...", "pending");
+          powerbiUploadId = await uploadLargeFileInChunks(
+            powerbiFile,
+            (done, total) => {
+              setStatus(`Uploading PowerBI file (${done}/${total})...`, "pending");
+            },
+            {},
+            "PowerBI file",
+          );
         }
 
         const formData = new FormData();
@@ -740,8 +765,9 @@
         }
 
         if (program === "program_a" || program === "program_b") {
-          const powerbiFile = powerbiReportInput.files[0];
-          if (powerbiFile) {
+          if (powerbiUploadId) {
+            formData.append("powerbi_upload_id", powerbiUploadId);
+          } else if (powerbiFile) {
             formData.append("powerbi_report", powerbiFile, powerbiFile.name);
           }
         }
@@ -760,6 +786,7 @@
           pivotValue,
           crmCount: crmEntries.length,
           monthlyUploadId,
+          powerbiUploadId,
           outputValue,
         };
       }
@@ -769,6 +796,7 @@
         pivotValue,
         crmCount,
         monthlyUploadId,
+        powerbiUploadId,
         outputValue,
       ) {
         const headers = {
@@ -781,6 +809,9 @@
         };
         if (monthlyUploadId) {
           headers["X-Report-Monthly-Comments-Upload-Id"] = monthlyUploadId;
+        }
+        if (powerbiUploadId) {
+          headers["X-Report-Powerbi-Upload-Id"] = powerbiUploadId;
         }
         if (outputValue) {
           headers["X-Report-Output-File"] = encodeURIComponent(outputValue);
@@ -928,6 +959,7 @@
             pivotValue,
             crmCount,
             monthlyUploadId,
+            powerbiUploadId,
             outputValue,
           } = await buildReportFormData();
           const generateUrl = new URL("/api/generate", window.location.href);
@@ -940,6 +972,9 @@
               monthlyUploadId,
             );
           }
+          if (powerbiUploadId) {
+            generateUrl.searchParams.set("powerbi_upload_id", powerbiUploadId);
+          }
           const response = await fetch(generateUrl, {
             method: "POST",
             headers: buildGenerateRequestHeaders(
@@ -947,6 +982,7 @@
               pivotValue,
               crmCount,
               monthlyUploadId,
+              powerbiUploadId,
               outputValue,
             ),
             body: formData,
