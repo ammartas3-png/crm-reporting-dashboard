@@ -66,20 +66,48 @@
                   </small>
                 </span>
               </label>
+
+              <label class="program-card">
+                <input type="radio" name="program" value="program_c" />
+                <span>
+                  <strong>New report</strong>
+                  <small>
+                    Under Developement !!
+                  </small>
+                </span>
+              </label>
             </div>
           </fieldset>
 
-          <fieldset>
+          <fieldset id="powerbi-fieldset">
             <legend>PowerBI report</legend>
             <label>
               Browse PowerBI .xlsx file
               <input
+                id="powerbi-report-input"
                 type="file"
                 name="powerbi_report"
                 accept=".xlsx"
                 required
               />
             </label>
+          </fieldset>
+
+          <fieldset id="monthly-comments-fieldset" hidden>
+            <legend>Monthly comments file</legend>
+            <label>
+              Browse monthly comments .xlsx file
+              <input
+                id="monthly-comments-input"
+                type="file"
+                name="monthly_comments_report"
+                accept=".xlsx"
+              />
+            </label>
+            <p class="section-note">
+              Upload the workbook with one sheet per platform. Each sheet must
+              include CID, Call Attempts, and Comments columns.
+            </p>
           </fieldset>
 
           <fieldset id="pivot-fieldset">
@@ -92,11 +120,11 @@
               <input
                 id="pivot-name"
                 type="text"
-                name="pivot_name"
                 autocomplete="off"
                 placeholder="Example: Today's Lead Report"
                 required
               />
+              <input id="pivot-name-submit" type="hidden" name="pivot_name" value="" />
             </label>
           </fieldset>
 
@@ -172,6 +200,34 @@
             </label>
           </div>
 
+          <div id="separate-department-row" class="toggle-row">
+            <input
+              id="separate-department"
+              class="toggle-input"
+              type="checkbox"
+              name="separate_department"
+              value="1"
+            />
+            <label class="toggle-label" for="separate-department">
+              <span class="toggle-switch"></span>
+              <span class="toggle-text">Separate by departments</span>
+            </label>
+          </div>
+
+          <div id="separate-by-days-row" class="toggle-row">
+            <input
+              id="separate-by-days"
+              class="toggle-input"
+              type="checkbox"
+              name="separate_by_days"
+              value="1"
+            />
+            <label class="toggle-label" for="separate-by-days">
+              <span class="toggle-switch"></span>
+              <span class="toggle-text">Separate by days</span>
+            </label>
+          </div>
+
           <div class="actions">
             <button id="submit-button" type="submit">Generate workbook</button>
             <p id="status" role="status" aria-live="polite"></p>
@@ -197,6 +253,7 @@
                 <option value="Modmount">Modmount</option>
                 <option value="Skadeva">Skadeva</option>
                 <option value="Fxnovus">Fxnovus</option>
+                <option value="EnvessaMarkets">EnvessaMarkets</option>
               </select>
             </label>
 
@@ -384,11 +441,21 @@
       const submitButton = document.querySelector("#submit-button");
       const statusEl = document.querySelector("#status");
       const pivotName = document.querySelector("#pivot-name");
+      const pivotNameSubmit = document.querySelector("#pivot-name-submit");
       const pivotHint = document.querySelector("#pivot-hint");
+      const pivotFieldset = document.querySelector("#pivot-fieldset");
       const outputFile = document.querySelector("#output-file");
       const outputHint = document.querySelector("#output-hint");
       const separateMInhouseRow = document.querySelector("#separate-m-inhouse-row");
       const separateMInhouseToggle = document.querySelector("#separate-m-inhouse");
+      const separateDepartmentRow = document.querySelector("#separate-department-row");
+      const separateDepartmentToggle = document.querySelector("#separate-department");
+      const separateByDaysRow = document.querySelector("#separate-by-days-row");
+      const separateByDaysToggle = document.querySelector("#separate-by-days");
+      const powerbiFieldset = document.querySelector("#powerbi-fieldset");
+      const powerbiReportInput = document.querySelector("#powerbi-report-input");
+      const monthlyCommentsFieldset = document.querySelector("#monthly-comments-fieldset");
+      const monthlyCommentsInput = document.querySelector("#monthly-comments-input");
 
       const programConfig = {
         program_a: {
@@ -408,6 +475,15 @@
             "Bulk Country Reports uses fixed workbook labels: Main Report uses M-Inhousemedia and country sheets use country names.",
           outputHint:
             "Choose a name for your file or leave the field blank for crm_country_report.xlsx.",
+        },
+        program_c: {
+          output: "crm_monthly_comments_output.xlsx",
+          fallbackDownload: "crm_monthly_comments_output.xlsx",
+          pivotRequired: true,
+          pivotHint:
+            "Choose the name of the Status pivot table included in the report sheet",
+          outputHint:
+            "Choose a name for your file or leave the field blank for crm_monthly_comments_output.xlsx.",
         },
       };
 
@@ -481,16 +557,296 @@
         return document.querySelector('input[name="program"]:checked').value;
       }
 
+      function syncPivotToForm() {
+        pivotNameSubmit.value = pivotName.value.trim();
+      }
+
       function syncProgramFields() {
         const selected = selectedProgram();
         const config = programConfig[selected];
         pivotName.required = config.pivotRequired;
         pivotHint.textContent = config.pivotHint;
+        pivotFieldset.hidden = !config.pivotRequired;
+        pivotName.disabled = false;
+        syncPivotToForm();
         outputFile.placeholder = config.output;
         outputHint.textContent = config.outputHint;
-        const showSeparateMInhouse = selected === "program_a";
+        const isProgramA = selected === "program_a";
+        const isProgramC = selected === "program_c";
+        const usesPowerBi = selected !== "program_c";
+        const usesMonthlyComments = isProgramC;
+
+        powerbiFieldset.hidden = !usesPowerBi;
+        powerbiReportInput.required = usesPowerBi;
+        powerbiReportInput.disabled = !usesPowerBi;
+
+        monthlyCommentsFieldset.hidden = !usesMonthlyComments;
+        monthlyCommentsInput.required = usesMonthlyComments;
+        monthlyCommentsInput.disabled = !usesMonthlyComments;
+
+        const showSeparateMInhouse = isProgramA || isProgramC;
         separateMInhouseRow.hidden = !showSeparateMInhouse;
         separateMInhouseToggle.disabled = !showSeparateMInhouse;
+
+        separateDepartmentRow.hidden = false;
+        separateDepartmentToggle.disabled = false;
+
+        separateByDaysRow.hidden = false;
+        separateByDaysToggle.disabled = false;
+      }
+
+      const LARGE_FILE_CHUNK_SIZE = 3 * 1024 * 1024;
+      // Single-file cap and total inline budget kept well under Vercel's ~4.5MB
+      // request limit. Anything bigger (or that would exceed the running budget)
+      // is uploaded in chunks and referenced by an upload id instead.
+      const DIRECT_UPLOAD_LIMIT = 3 * 1024 * 1024;
+      const INLINE_REQUEST_BUDGET = 3 * 1024 * 1024;
+
+      async function uploadLargeFileInChunks(
+        file,
+        onProgress,
+        metadata = {},
+        fileLabel = "file",
+      ) {
+        const uploadId = crypto.randomUUID();
+        const totalChunks = Math.max(1, Math.ceil(file.size / LARGE_FILE_CHUNK_SIZE));
+
+        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
+          const start = chunkIndex * LARGE_FILE_CHUNK_SIZE;
+          const end = Math.min(start + LARGE_FILE_CHUNK_SIZE, file.size);
+          const chunk = file.slice(start, end);
+          const chunkForm = new FormData();
+          chunkForm.append("app", "report");
+          chunkForm.append("report_action", "upload_monthly_chunk");
+          chunkForm.append("upload_id", uploadId);
+          chunkForm.append("chunk_index", String(chunkIndex));
+          chunkForm.append("total_chunks", String(totalChunks));
+          chunkForm.append("filename", file.name);
+          if (metadata.pivotName) {
+            chunkForm.append("pivot_name", metadata.pivotName);
+          }
+          if (metadata.program) {
+            chunkForm.append("program", metadata.program);
+          }
+          if (metadata.crmCount) {
+            chunkForm.append("crm_count", metadata.crmCount);
+          }
+          chunkForm.append("chunk", chunk, `${file.name}.part${chunkIndex}`);
+
+          const chunkUrl = new URL("/api/generate", window.location.href);
+          chunkUrl.searchParams.set("report_action", "upload_monthly_chunk");
+          chunkUrl.searchParams.set("upload_id", uploadId);
+
+          const response = await fetch(chunkUrl, {
+            method: "POST",
+            body: chunkForm,
+          });
+          if (!response.ok) {
+            throw new Error(
+              await readErrorMessage(
+                response,
+                `Failed to upload ${fileLabel} chunk ${chunkIndex + 1} of ${totalChunks}.`,
+              ),
+            );
+          }
+
+          if (onProgress) {
+            onProgress(chunkIndex + 1, totalChunks);
+          }
+        }
+
+        return uploadId;
+      }
+
+      function collectCrmEntries() {
+        const entries = [];
+        crmRows().forEach((row) => {
+          const fileInput = row.querySelector(".crm-file-input");
+          const platformInput = row.querySelector(".platform-input");
+          const crmFile = fileInput.files[0];
+          const platform = platformInput.value.trim();
+          if (!crmFile && !platform) {
+            return;
+          }
+          entries.push({ crmFile, platform, fileInput, platformInput });
+        });
+        return entries;
+      }
+
+      async function buildReportFormData() {
+        syncPivotToForm();
+        const program = selectedProgram();
+        const pivotValue = pivotName.value.trim();
+        const crmEntries = collectCrmEntries();
+
+        if ((program === "program_a" || program === "program_c") && !pivotValue) {
+          pivotName.focus();
+          throw new Error("Pivot table name is required for this report program.");
+        }
+
+        if (!crmEntries.length) {
+          throw new Error("At least one CRM file is required.");
+        }
+
+        for (const [index, entry] of crmEntries.entries()) {
+          entry.fileInput.setCustomValidity("");
+          entry.platformInput.setCustomValidity("");
+          if (!entry.crmFile) {
+            entry.fileInput.setCustomValidity(
+              `Browse and select CRM file #${index + 1}.`,
+            );
+            entry.fileInput.reportValidity();
+            throw new Error(`CRM file #${index + 1} is required.`);
+          }
+          if (!entry.platform) {
+            entry.platformInput.setCustomValidity(
+              `Select the platform for CRM file #${index + 1}.`,
+            );
+            entry.platformInput.reportValidity();
+            throw new Error(`Platform name for CRM file #${index + 1} is required.`);
+          }
+        }
+
+        // Keep the generate request body small: any file that is large (or that
+        // would push the request over the inline budget) is uploaded in chunks
+        // first and referenced by an upload id. Small files stay inline.
+        let inlineBytes = 0;
+        async function uploadOrInline(file, label, metadata) {
+          if (!file) {
+            return "";
+          }
+          if (
+            file.size <= DIRECT_UPLOAD_LIMIT &&
+            inlineBytes + file.size <= INLINE_REQUEST_BUDGET
+          ) {
+            inlineBytes += file.size;
+            return "";
+          }
+          setStatus(`Uploading ${label} in parts...`, "pending");
+          return uploadLargeFileInChunks(
+            file,
+            (done, total) => {
+              setStatus(`Uploading ${label} (${done}/${total})...`, "pending");
+            },
+            metadata,
+            label,
+          );
+        }
+
+        let monthlyUploadId = "";
+        let monthlyFile = null;
+        if (program === "program_c") {
+          monthlyFile = monthlyCommentsInput.files[0];
+          if (!monthlyFile) {
+            throw new Error("Browse and select the monthly comments .xlsx file.");
+          }
+          monthlyUploadId = await uploadOrInline(
+            monthlyFile,
+            "monthly comments file",
+            { pivotName: pivotValue, program, crmCount: String(crmEntries.length) },
+          );
+        }
+
+        const powerbiFile =
+          program === "program_a" || program === "program_b"
+            ? powerbiReportInput.files[0] || null
+            : null;
+        const powerbiUploadId = await uploadOrInline(powerbiFile, "PowerBI file", {});
+
+        const crmUploadIds = [];
+        for (const [index, entry] of crmEntries.entries()) {
+          crmUploadIds[index] = await uploadOrInline(
+            entry.crmFile,
+            `CRM file #${index + 1}`,
+            {},
+          );
+        }
+
+        const formData = new FormData();
+        formData.append("app", "report");
+        formData.append("program", program);
+        formData.append("pivot_name", pivotValue);
+        formData.append("crm_count", String(crmEntries.length));
+        formData.append(
+          "separate_m_inhouse",
+          separateMInhouseToggle.checked ? "1" : "0",
+        );
+        formData.append(
+          "separate_department",
+          separateDepartmentToggle.checked ? "1" : "0",
+        );
+        formData.append(
+          "separate_by_days",
+          separateByDaysToggle.checked ? "1" : "0",
+        );
+
+        crmEntries.forEach((entry, index) => {
+          formData.append(`platform_${index}`, entry.platform);
+          if (crmUploadIds[index]) {
+            formData.append(`crm_upload_id_${index}`, crmUploadIds[index]);
+          } else {
+            formData.append(`crm_file_${index}`, entry.crmFile, entry.crmFile.name);
+          }
+        });
+
+        const outputValue = outputFile.value.trim();
+        if (outputValue) {
+          formData.append("output_file", outputValue);
+        }
+
+        if (program === "program_a" || program === "program_b") {
+          if (powerbiUploadId) {
+            formData.append("powerbi_upload_id", powerbiUploadId);
+          } else if (powerbiFile) {
+            formData.append("powerbi_report", powerbiFile, powerbiFile.name);
+          }
+        }
+
+        if (program === "program_c") {
+          if (monthlyUploadId) {
+            formData.append("monthly_comments_upload_id", monthlyUploadId);
+          } else if (monthlyFile) {
+            formData.append("monthly_comments_report", monthlyFile, monthlyFile.name);
+          }
+        }
+
+        return {
+          formData,
+          program,
+          pivotValue,
+          crmCount: crmEntries.length,
+          monthlyUploadId,
+          powerbiUploadId,
+          outputValue,
+        };
+      }
+
+      function buildGenerateRequestHeaders(
+        program,
+        pivotValue,
+        crmCount,
+        monthlyUploadId,
+        powerbiUploadId,
+        outputValue,
+      ) {
+        const headers = {
+          "X-Report-Program": program,
+          "X-Report-Pivot-Name": encodeURIComponent(pivotValue),
+          "X-Report-Crm-Count": String(crmCount),
+          "X-Report-Separate-M-Inhouse": separateMInhouseToggle.checked ? "1" : "0",
+          "X-Report-Separate-Department": separateDepartmentToggle.checked ? "1" : "0",
+          "X-Report-Separate-By-Days": separateByDaysToggle.checked ? "1" : "0",
+        };
+        if (monthlyUploadId) {
+          headers["X-Report-Monthly-Comments-Upload-Id"] = monthlyUploadId;
+        }
+        if (powerbiUploadId) {
+          headers["X-Report-Powerbi-Upload-Id"] = powerbiUploadId;
+        }
+        if (outputValue) {
+          headers["X-Report-Output-File"] = encodeURIComponent(outputValue);
+        }
+        return headers;
       }
 
       function crmRows() {
@@ -533,7 +889,6 @@
       }
 
       function validateCrmRows() {
-        let uploadedCount = 0;
         const rows = crmRows();
 
         rows.forEach((row) => {
@@ -544,10 +899,6 @@
 
           fileInput.setCustomValidity("");
           platformInput.setCustomValidity("");
-
-          if (hasFile) {
-            uploadedCount += 1;
-          }
 
           if (hasFile && !hasPlatform) {
             platformInput.setCustomValidity(
@@ -562,10 +913,11 @@
           }
         });
 
-        if (uploadedCount === 0 && rows.length > 0) {
+        const uploadedEntries = collectCrmEntries().filter((entry) => entry.crmFile);
+        if (!uploadedEntries.length && rows.length > 0) {
           rows[0]
             .querySelector(".crm-file-input")
-            .setCustomValidity("Browse and select at least one CRM .xlsx file.");
+            .setCustomValidity("At least one CRM file is required.");
         }
       }
 
@@ -576,15 +928,49 @@
           : programConfig[selectedProgram()].fallbackDownload;
       }
 
+      const MONTHLY_COMMENTS_PASSWORD = "59685968";
+      let lastSelectedProgram = selectedProgram();
+
+      function handleProgramChange() {
+        const selected = selectedProgram();
+
+        if (selected === "program_c") {
+          const entered = window.prompt(
+            "Enter the password to use New report:",
+          );
+          if (entered !== MONTHLY_COMMENTS_PASSWORD) {
+            const previous = document.querySelector(
+              `input[name="program"][value="${lastSelectedProgram}"]`,
+            );
+            if (previous) {
+              previous.checked = true;
+            }
+            syncProgramFields();
+            setStatus(
+              "Wrong password. New report was not selected.",
+              "error",
+            );
+            return;
+          }
+          setStatus("", "");
+        }
+
+        lastSelectedProgram = selected;
+        syncProgramFields();
+      }
+
       programInputs.forEach((input) => {
-        input.addEventListener("change", syncProgramFields);
+        input.addEventListener("change", handleProgramChange);
       });
+      pivotName.addEventListener("input", syncPivotToForm);
+      pivotName.addEventListener("change", syncPivotToForm);
 
       addCrmFileButton.addEventListener("click", addCrmRow);
 
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         syncProgramFields();
+        syncPivotToForm();
         updateCrmRowIndexes();
         validateCrmRows();
 
@@ -597,15 +983,47 @@
         setStatus("Uploading files and generating workbook...", "pending");
 
         try {
-          const response = await fetch("/api/generate", {
+          const {
+            formData,
+            program,
+            pivotValue,
+            crmCount,
+            monthlyUploadId,
+            powerbiUploadId,
+            outputValue,
+          } = await buildReportFormData();
+          const generateUrl = new URL("/api/generate", window.location.href);
+          generateUrl.searchParams.set("program", program);
+          generateUrl.searchParams.set("pivot_name", pivotValue);
+          generateUrl.searchParams.set("crm_count", String(crmCount));
+          if (monthlyUploadId) {
+            generateUrl.searchParams.set(
+              "monthly_comments_upload_id",
+              monthlyUploadId,
+            );
+          }
+          if (powerbiUploadId) {
+            generateUrl.searchParams.set("powerbi_upload_id", powerbiUploadId);
+          }
+          const response = await fetch(generateUrl, {
             method: "POST",
-            body: new FormData(form),
+            headers: buildGenerateRequestHeaders(
+              program,
+              pivotValue,
+              crmCount,
+              monthlyUploadId,
+              powerbiUploadId,
+              outputValue,
+            ),
+            body: formData,
           });
 
           if (!response.ok) {
             const message = await readErrorMessage(response, "Unable to generate the workbook.");
             throw new Error(message);
           }
+
+          const warning = response.headers.get("X-Report-Warning");
 
           const blob = await response.blob();
           const filename = filenameFromDisposition(
@@ -619,7 +1037,11 @@
           link.click();
           link.remove();
           URL.revokeObjectURL(url);
-          setStatus("Done. Your workbook download has started.", "success");
+          if (warning) {
+            setStatus(warning, "error");
+          } else {
+            setStatus("Done. Your workbook download has started.", "success");
+          }
         } catch (error) {
           setStatus(error.message, "error");
         } finally {

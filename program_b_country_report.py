@@ -24,6 +24,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
+import kyc_lookup
 from report_generator import (
     CRM_COLUMNS,
     NO_ANSWER_COLORS,
@@ -33,11 +34,16 @@ from report_generator import (
     POWERBI_COLUMNS,
     STATUS_LIST,
     STATUS_COLORS,
+    _day_sheet_name,
+    _department_sheet_name,
+    _split_rows_by_day,
+    _split_rows_by_department,
     comments_for_status,
     extract_comments,
     normalize_header,
     normalize_match_value,
     normalize_status,
+    read_monthly_comments_lookup,
 )
 
 
@@ -307,6 +313,39 @@ def _country_cell_formula(
     return (
         f"=IFERROR("
         f"IF({country_expr}={country_lit},"
+        f'IF({target_expr}="","",{target_expr}),'
+        f'""),'
+        f'"")'
+    )
+
+
+def _day_cell_formula(
+    id_lit: str,
+    platform_lit: str,
+    target_col_letter: str,
+    main_sheet_name: str,
+    main_id_col_letter: str,
+    main_platform_col_letter: str,
+    first_row: int,
+    last_row: int,
+) -> str:
+    """Formula that pulls a Main Report value matched by ID and Platform."""
+    safe_name = main_sheet_name.replace("'", "''")
+    main_ref = f"'{safe_name}'!"
+    id_range = f"{main_ref}${main_id_col_letter}${first_row}:${main_id_col_letter}${last_row}"
+    platform_range = (
+        f"{main_ref}${main_platform_col_letter}${first_row}:"
+        f"${main_platform_col_letter}${last_row}"
+    )
+    target_range = f"{main_ref}${target_col_letter}${first_row}:${target_col_letter}${last_row}"
+
+    match_expr = f"MATCH({id_lit},{id_range},0)"
+    platform_expr = f"INDEX({platform_range},{match_expr})"
+    target_expr = f"INDEX({target_range},{match_expr})"
+
+    return (
+        f"=IFERROR("
+        f"IF({platform_expr}={platform_lit},"
         f'IF({target_expr}="","",{target_expr}),'
         f'""),'
         f'"")'
@@ -858,20 +897,24 @@ def _sanitize_table_name(name: str, used: set[str]) -> str:
     return sanitized
 
 
-def write_output(rows: list[dict[str, Any]], output_file: Path) -> None:
-    workbook = Workbook()
-    used_sheet_names: set[str] = set()
-    used_table_names: set[str] = set()
-
+def _write_country_workbook(
+    workbook: Workbook,
+    rows: list[dict[str, Any]],
+    *,
+    used_sheet_names: set[str],
+    used_table_names: set[str],
+    main_sheet_title: str,
+    main_pivot_label: str,
+    country_sheet_prefix: str = "",
+) -> None:
     rows = sorted(rows, key=lambda row: str(row.get("Status", "") or "").strip().lower())
 
-    ws_main = workbook.active
-    ws_main.title = _sanitize_sheet_name("Main Report", used_sheet_names)
+    ws_main = workbook.create_sheet(title=_sanitize_sheet_name(main_sheet_title, used_sheet_names))
     main_pivot_info = _write_data_table_and_pivots(
         ws_main,
         rows,
-        pivot_label=MAIN_REPORT_PIVOT_LABEL,
-        table_name=_sanitize_table_name("CRMOutput_Main", used_table_names),
+        pivot_label=main_pivot_label,
+        table_name=_sanitize_table_name(f"CRMOutput_{main_sheet_title}", used_table_names),
         include_call_attempts=True,
     )
 
@@ -882,41 +925,326 @@ def write_output(rows: list[dict[str, Any]], output_file: Path) -> None:
             countries[country].append(row)
 
     for country in sorted(countries.keys(), key=str.lower):
-        sheet_name = _sanitize_sheet_name(country, used_sheet_names)
+        country_sheet_title = (
+            f"{country_sheet_prefix}{country}" if country_sheet_prefix else country
+        )
+        sheet_name = _sanitize_sheet_name(country_sheet_title, used_sheet_names)
         ws_country = workbook.create_sheet(title=sheet_name)
         _write_data_table_and_pivots(
             ws_country,
             countries[country],
             pivot_label=country,
-            table_name=_sanitize_table_name(f"CRMOutput_{country}", used_table_names),
+            table_name=_sanitize_table_name(f"CRMOutput_{country_sheet_title}", used_table_names),
             include_call_attempts=False,
             link_to_main=ws_main.title,
             country_filter=country,
             main_pivot_info=main_pivot_info,
         )
 
+
+MAIN_REPORT_SHEET_TITLE = "Main Report"
+
+
+def _write_day_tab(
+    ws,
+    rows: list[dict[str, Any]],
+    *,
+    pivot_label: str,
+    table_name: str,
+    main_sheet_name: str,
+    main_last_row: int,
+) -> None:
+    """Write a day tab whose Status/CB/Comments are formula-linked to Main Report."""
+    status_col_idx = OUTPUT_COLUMNS.index("Status") + 1
+    cb_col_idx = OUTPUT_COLUMNS.index("CB") + 1
+    comments_col_idx = OUTPUT_COLUMNS.index("Comments") + 1
+    id_col_idx = OUTPUT_COLUMNS.index("ID") + 1
+    platform_col_idx = OUTPUT_COLUMNS.index("Platform") + 1
+    formula_cols = {status_col_idx, cb_col_idx, comments_col_idx}
+    main_id_letter = get_column_letter(id_col_idx)
+    main_platform_letter = get_column_letter(platform_col_idx)
+
+    ws.append(OUTPUT_COLUMNS)
+    for cell in ws[1]:
+        cell.font = Font(bold=True, name="Arial")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.cell(row=1, column=comments_col_idx).alignment = Alignment(
+        horizontal="center",
+        vertical="center",
+        wrap_text=True,
+    )
+
+    for idx, row in enumerate(rows):
+        excel_row = idx + 2
+        id_lit = _id_literal_for_formula(row.get("ID"))
+        platform_lit = _str_literal_for_formula(row.get("Platform"))
+
+        for col_idx, column in enumerate(OUTPUT_COLUMNS, start=1):
+            if col_idx in formula_cols:
+                value = _day_cell_formula(
+                    id_lit=id_lit,
+                    platform_lit=platform_lit,
+                    target_col_letter=get_column_letter(col_idx),
+                    main_sheet_name=main_sheet_name,
+                    main_id_col_letter=main_id_letter,
+                    main_platform_col_letter=main_platform_letter,
+                    first_row=2,
+                    last_row=main_last_row,
+                )
+            else:
+                value = row.get(column, "")
+                if value is None:
+                    value = ""
+
+            cell = ws.cell(row=excel_row, column=col_idx, value=value)
+            if col_idx == comments_col_idx:
+                cell.alignment = Alignment(
+                    wrap_text=True, vertical="center", horizontal="center"
+                )
+            else:
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.font = Font(name="Arial")
+
+    last_data_row = ws.max_row
+    _apply_all_borders(ws, last_data_row, len(OUTPUT_COLUMNS))
+
+    if last_data_row >= 2:
+        status_letter = get_column_letter(status_col_idx)
+        cb_letter = get_column_letter(cb_col_idx)
+        comments_letter = get_column_letter(comments_col_idx)
+        _apply_status_color_cf(ws, f"{status_letter}2:{status_letter}{last_data_row}")
+        _apply_cb_black_cf(
+            ws,
+            f"{cb_letter}2:{cb_letter}{last_data_row}",
+            status_letter,
+            first_data_row=2,
+        )
+        _apply_comments_yellow_cf(
+            ws,
+            f"{comments_letter}2:{comments_letter}{last_data_row}",
+        )
+
+    last_col_letter = get_column_letter(len(OUTPUT_COLUMNS))
+    table = Table(displayName=table_name, ref=f"A1:{last_col_letter}{last_data_row}")
+    table.tableStyleInfo = TableStyleInfo(
+        name="TableStyleMedium9",
+        showFirstColumn=False,
+        showLastColumn=False,
+        showRowStripes=True,
+        showColumnStripes=False,
+    )
+    ws.add_table(table)
+
+    for col_idx in range(1, len(OUTPUT_COLUMNS) + 1):
+        col_letter = get_column_letter(col_idx)
+        column_name = OUTPUT_COLUMNS[col_idx - 1]
+        max_length = len(str(column_name))
+        for row in rows[:100]:
+            value = row.get(column_name)
+            if value is None or value == "":
+                continue
+            if isinstance(value, _dt.datetime):
+                length = 19
+            elif isinstance(value, _dt.date):
+                length = 10
+            else:
+                length = len(str(value))
+            max_length = max(max_length, length)
+        ws.column_dimensions[col_letter].width = min(max_length + 2, 40)
+
+    pivot_row = last_data_row + PIVOT_GAP_ROWS
+    pivot_col = PIVOT_START_COL
+    status_letter = get_column_letter(status_col_idx)
+    call_att_letter = get_column_letter(OUTPUT_COLUMNS.index("Call Attempts") + 1)
+
+    next_row, _ = _write_pivot_status(
+        ws,
+        pivot_row,
+        pivot_col,
+        pivot_label,
+        rows,
+        data_sheet_name=ws.title,
+        status_col_letter=status_letter,
+        data_first_row=2,
+        data_last_row=last_data_row,
+    )
+    next_row += PIVOT_INTER_GAP
+    _write_pivot_call_attempts(
+        ws,
+        next_row,
+        pivot_col,
+        rows,
+        data_sheet_name=ws.title,
+        call_attempts_col_letter=call_att_letter,
+        data_first_row=2,
+        data_last_row=last_data_row,
+    )
+
+
+def _write_day_workbook(
+    workbook: Workbook,
+    rows: list[dict[str, Any]],
+    *,
+    used_sheet_names: set[str],
+    used_table_names: set[str],
+    main_sheet_title: str = MAIN_REPORT_SHEET_TITLE,
+    main_pivot_label: str = MAIN_REPORT_PIVOT_LABEL,
+) -> None:
+    """Write a Main Report sheet plus one formula-linked tab per day."""
+    ordered_rows = sorted(
+        rows, key=lambda row: str(row.get("Status", "") or "").strip().lower()
+    )
+
+    ws_main = workbook.create_sheet(
+        title=_sanitize_sheet_name(main_sheet_title, used_sheet_names)
+    )
+    _write_data_table_and_pivots(
+        ws_main,
+        ordered_rows,
+        pivot_label=main_pivot_label,
+        table_name=_sanitize_table_name(f"CRMOutput_{main_sheet_title}", used_table_names),
+        include_call_attempts=True,
+    )
+    main_last_row = len(ordered_rows) + 1
+
+    for day_key, day_rows in _split_rows_by_day(ordered_rows):
+        day_label = _day_sheet_name(day_key)
+        sheet_name = _sanitize_sheet_name(day_label, used_sheet_names)
+        ws_day = workbook.create_sheet(title=sheet_name)
+        _write_day_tab(
+            ws_day,
+            sorted(
+                day_rows,
+                key=lambda row: str(row.get("Status", "") or "").strip().lower(),
+            ),
+            pivot_label=day_label,
+            table_name=_sanitize_table_name(f"CRMOutput_{day_label}", used_table_names),
+            main_sheet_name=ws_main.title,
+            main_last_row=main_last_row,
+        )
+
+
+def write_output(
+    rows: list[dict[str, Any]],
+    output_file: Path,
+    separate_department: bool = False,
+    separate_by_days: bool = False,
+) -> None:
+    workbook = Workbook()
+    used_sheet_names: set[str] = set()
+    used_table_names: set[str] = set()
+
+    if separate_by_days:
+        workbook.remove(workbook.active)
+        _write_day_workbook(
+            workbook,
+            rows,
+            used_sheet_names=used_sheet_names,
+            used_table_names=used_table_names,
+        )
+    elif separate_department:
+        workbook.remove(workbook.active)
+        for department_key, department_rows in _split_rows_by_department(rows):
+            department_label = _department_sheet_name(department_key)
+            _write_country_workbook(
+                workbook,
+                department_rows,
+                used_sheet_names=used_sheet_names,
+                used_table_names=used_table_names,
+                main_sheet_title=department_label,
+                main_pivot_label=(
+                    MAIN_REPORT_PIVOT_LABEL
+                    if department_key == "general"
+                    else department_label
+                ),
+                country_sheet_prefix=f"{department_label}-",
+            )
+    else:
+        ws_main = workbook.active
+        ws_main.title = _sanitize_sheet_name("Main Report", used_sheet_names)
+        main_pivot_info = _write_data_table_and_pivots(
+            ws_main,
+            sorted(rows, key=lambda row: str(row.get("Status", "") or "").strip().lower()),
+            pivot_label=MAIN_REPORT_PIVOT_LABEL,
+            table_name=_sanitize_table_name("CRMOutput_Main", used_table_names),
+            include_call_attempts=True,
+        )
+
+        countries: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            country = str(row.get("Country", "") or "").strip()
+            if country:
+                countries[country].append(row)
+
+        for country in sorted(countries.keys(), key=str.lower):
+            sheet_name = _sanitize_sheet_name(country, used_sheet_names)
+            ws_country = workbook.create_sheet(title=sheet_name)
+            _write_data_table_and_pivots(
+                ws_country,
+                countries[country],
+                pivot_label=country,
+                table_name=_sanitize_table_name(f"CRMOutput_{country}", used_table_names),
+                include_call_attempts=False,
+                link_to_main=ws_main.title,
+                country_filter=country,
+                main_pivot_info=main_pivot_info,
+            )
+
     output_file.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output_file)
 
 
 def build_output(
-    powerbi_report: Path,
     crm_files: list[Path],
     platforms: list[str],
     output_file: Path,
+    powerbi_report: Path | None = None,
+    monthly_comments_report: Path | None = None,
     powerbi_sheet: str | None = None,
     crm_sheet: str | None = None,
-) -> None:
+    separate_department: bool = False,
+    separate_by_days: bool = False,
+    telemarketing_kyc_lookup: dict[tuple[str, str], str] | None = None,
+) -> list[Path]:
     if len(crm_files) != len(platforms):
         raise ValueError("Each CRM file must have exactly one platform name.")
 
-    powerbi_lookup = read_powerbi_lookup(powerbi_report, powerbi_sheet)
+    if monthly_comments_report is not None:
+        comments_lookup = read_monthly_comments_lookup(monthly_comments_report)
+    elif powerbi_report is not None:
+        comments_lookup = read_powerbi_lookup(powerbi_report, powerbi_sheet)
+    else:
+        raise ValueError(
+            "Either powerbi_report or monthly_comments_report must be provided."
+        )
+
     all_rows: list[dict[str, Any]] = []
 
     for crm_file, platform in zip(crm_files, platforms):
-        all_rows.extend(read_crm_rows(crm_file, platform, powerbi_lookup, crm_sheet))
+        all_rows.extend(read_crm_rows(crm_file, platform, comments_lookup, crm_sheet))
 
-    write_output(all_rows, output_file)
+    kyc_lookup.apply_kyc_comments(all_rows, telemarketing_kyc_lookup)
+
+    if separate_by_days and separate_department:
+        # One file per department, each with a Main Report tab + day tabs.
+        suffix = output_file.suffix or ".xlsx"
+        generated_outputs: list[Path] = []
+        for department_key, department_rows in _split_rows_by_department(all_rows):
+            department_label = _department_sheet_name(department_key)
+            department_output = output_file.with_name(
+                f"{output_file.stem}_{department_label}{suffix}"
+            )
+            write_output(department_rows, department_output, separate_by_days=True)
+            generated_outputs.append(department_output)
+        return generated_outputs
+
+    write_output(
+        all_rows,
+        output_file,
+        separate_department=separate_department,
+        separate_by_days=separate_by_days,
+    )
+    return [output_file]
 
 
 def prompt(message: str, allow_empty: bool = False) -> str:

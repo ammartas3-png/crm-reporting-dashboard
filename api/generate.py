@@ -13,6 +13,7 @@ import re
 import sys
 import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 import zipfile
@@ -29,9 +30,17 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import cr_maker  # noqa: E402
+import kyc_lookup  # noqa: E402
 import lead_splitter  # noqa: E402
 import program_a_report  # noqa: E402
 import program_b_country_report  # noqa: E402
+from api.file_uploads import (  # noqa: E402
+    CHUNK_UPLOAD_MAX_BYTES,
+    cleanup_upload,
+    read_upload_metadata,
+    resolve_uploaded_file,
+    save_chunk,
+)
 
 
 APP_REPORT = "report"
@@ -40,8 +49,11 @@ APP_CR = "cr"
 APP_DATABASE_CHECK = "database_check"
 PROGRAM_A = "program_a"
 PROGRAM_B = "program_b"
+PROGRAM_C = "program_c"
 PROGRAM_A_OUTPUT_FILENAME = "crm_powerbi_output.xlsx"
 PROGRAM_B_OUTPUT_FILENAME = "crm_country_report.xlsx"
+PROGRAM_C_OUTPUT_FILENAME = "crm_monthly_comments_output.xlsx"
+REPORT_ACTION_UPLOAD_MONTHLY_CHUNK = "upload_monthly_chunk"
 MAX_UPLOAD_BYTES = 45 * 1024 * 1024
 XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 DATABASE_CHECK_WEBHOOK_URL = os.environ.get(
@@ -244,13 +256,286 @@ def _field(form: cgi.FieldStorage, name: str) -> cgi.FieldStorage | None:
 
 
 def _field_text(form: cgi.FieldStorage, name: str) -> str:
-    value = _field(form, name)
-    if value is None:
-        return ""
-    raw = value.value
+    raw = form.getfirst(name, default=None)
+    if raw is None:
+        value = _field(form, name)
+        if value is None:
+            return ""
+        raw = value.value
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8", errors="replace")
     return str(raw or "").strip()
+
+
+def _query_text(handler: BaseHTTPRequestHandler, name: str) -> str:
+    parsed = urllib.parse.urlparse(handler.path)
+    values = urllib.parse.parse_qs(parsed.query, keep_blank_values=True).get(name)
+    if not values:
+        return ""
+    return str(values[0]).strip()
+
+
+def _header_text(handler: BaseHTTPRequestHandler, name: str) -> str:
+    headers = getattr(handler, "headers", None)
+    if headers is None:
+        return ""
+
+    candidates = {
+        name,
+        name.title(),
+        name.upper(),
+        name.lower(),
+        name.replace("_", "-"),
+        name.replace("_", "-").title(),
+    }
+    if hasattr(headers, "get"):
+        for candidate in candidates:
+            value = headers.get(candidate)
+            if value:
+                return urllib.parse.unquote(str(value).strip())
+
+    if hasattr(headers, "items"):
+        target = name.casefold()
+        for key, value in headers.items():
+            if key.casefold() == target and value:
+                return urllib.parse.unquote(str(value).strip())
+    return ""
+
+
+def _field_text_with_query_fallback(
+    handler: BaseHTTPRequestHandler,
+    form: cgi.FieldStorage,
+    name: str,
+) -> str:
+    value = _field_text(form, name)
+    if value:
+        return value
+    header_name = f"x-report-{name.replace('_', '-')}"
+    header_value = _header_text(handler, header_name)
+    if header_value:
+        return header_value
+    return _query_text(handler, name)
+
+
+def _resolve_report_program(
+    handler: BaseHTTPRequestHandler,
+    form: cgi.FieldStorage,
+    monthly_comments_upload_id: str,
+    upload_meta: dict[str, str] | None = None,
+) -> str:
+    if monthly_comments_upload_id:
+        return PROGRAM_C
+    if upload_meta and upload_meta.get("program") in {PROGRAM_A, PROGRAM_B, PROGRAM_C}:
+        return upload_meta["program"]
+    program = _field_text_with_query_fallback(handler, form, "program") or PROGRAM_A
+    if program not in {PROGRAM_A, PROGRAM_B, PROGRAM_C}:
+        raise ValueError("Please select a report program.")
+    return program
+
+
+def _resolve_pivot_name(
+    handler: BaseHTTPRequestHandler,
+    form: cgi.FieldStorage,
+    upload_meta: dict[str, str] | None = None,
+) -> str:
+    pivot_name = _field_text_with_query_fallback(handler, form, "pivot_name")
+    if pivot_name:
+        return pivot_name
+    if upload_meta:
+        return str(upload_meta.get("pivot_name", "")).strip()
+    return ""
+
+
+def _discover_crm_indices(form: cgi.FieldStorage) -> list[int]:
+    indices: set[int] = set()
+    for key in form.keys():
+        match = re.fullmatch(r"crm_file_(\d+)", str(key)) or re.fullmatch(
+            r"crm_upload_id_(\d+)", str(key)
+        )
+        if match:
+            indices.add(int(match.group(1)))
+    return sorted(indices)
+
+
+def _collect_crm_uploads(
+    form: cgi.FieldStorage,
+    directory: Path,
+) -> tuple[list[Path], list[str], list[str]]:
+    indices = _discover_crm_indices(form)
+    if not indices:
+        raise ValueError("At least one CRM file is required.")
+
+    crm_files: list[Path] = []
+    platforms: list[str] = []
+    crm_upload_ids: list[str] = []
+    for index in indices:
+        upload_id = _field_text(form, f"crm_upload_id_{index}")
+        crm_field = _field(form, f"crm_file_{index}")
+        platform = _field_text(form, f"platform_{index}")
+        has_upload = bool(upload_id) or _has_upload(crm_field)
+        if not has_upload and not platform:
+            continue
+        if not has_upload:
+            raise ValueError(f"Please upload CRM file #{index + 1}.")
+        if not platform:
+            raise ValueError(
+                f"Platform name for CRM file #{index + 1} is required."
+            )
+
+        if upload_id:
+            try:
+                crm_path = resolve_uploaded_file(upload_id)
+            except ValueError as exc:
+                raise ValueError(
+                    f"CRM file #{index + 1} upload was not found on the server. "
+                    "Please refresh the page, re-select the file, and try again."
+                ) from exc
+            crm_upload_ids.append(upload_id)
+        else:
+            crm_path = _save_upload(
+                crm_field,
+                directory,
+                f"CRM file #{index + 1}",
+            )
+        crm_files.append(crm_path)
+        platforms.append(platform)
+
+    if not crm_files:
+        raise ValueError("At least one CRM file is required.")
+    return crm_files, platforms, crm_upload_ids
+
+
+def _resolve_monthly_comments_upload_id(
+    handler: BaseHTTPRequestHandler,
+    form: cgi.FieldStorage,
+) -> str:
+    return _field_text_with_query_fallback(
+        handler, form, "monthly_comments_upload_id"
+    )
+
+
+def _resolve_monthly_comments_path(
+    handler: BaseHTTPRequestHandler,
+    form: cgi.FieldStorage,
+    directory: Path,
+    upload_id: str,
+) -> Path:
+    if upload_id:
+        try:
+            return resolve_uploaded_file(upload_id)
+        except ValueError as exc:
+            raise ValueError(
+                "Monthly comments upload was not found on the server. "
+                "Please refresh the page, re-select the monthly comments file, "
+                "and try again."
+            ) from exc
+
+    monthly_field = _field(form, "monthly_comments_report")
+    if _has_upload(monthly_field):
+        return _save_upload(
+            monthly_field,
+            directory,
+            "Monthly comments report",
+        )
+
+    raise ValueError("Please upload the monthly comments .xlsx file.")
+
+
+def _resolve_powerbi_upload_id(
+    handler: BaseHTTPRequestHandler,
+    form: cgi.FieldStorage,
+) -> str:
+    return _field_text_with_query_fallback(handler, form, "powerbi_upload_id")
+
+
+def _resolve_powerbi_path(
+    handler: BaseHTTPRequestHandler,
+    form: cgi.FieldStorage,
+    directory: Path,
+    upload_id: str,
+) -> Path:
+    if upload_id:
+        try:
+            return resolve_uploaded_file(upload_id)
+        except ValueError as exc:
+            raise ValueError(
+                "PowerBI upload was not found on the server. "
+                "Please refresh the page, re-select the PowerBI file, and try again."
+            ) from exc
+
+    return _save_upload(
+        _field(form, "powerbi_report"),
+        directory,
+        "PowerBI report",
+    )
+
+
+def _resolve_toggle(
+    handler: BaseHTTPRequestHandler,
+    form: cgi.FieldStorage,
+    name: str,
+    *,
+    default: bool = False,
+) -> bool:
+    value = _field_text_with_query_fallback(handler, form, name)
+    if not value:
+        return default
+    return _is_truthy(value)
+
+
+def _field_int_with_fallback(
+    handler: BaseHTTPRequestHandler,
+    form: cgi.FieldStorage,
+    name: str,
+) -> int:
+    value = _field_text_with_query_fallback(handler, form, name)
+    if not value:
+        raise ValueError(f"{name} is required.")
+    return int(value)
+
+
+def _handle_monthly_chunk_upload(
+    handler: BaseHTTPRequestHandler,
+    form: cgi.FieldStorage,
+) -> bytes:
+    upload_id = _field_text_with_query_fallback(handler, form, "upload_id")
+    chunk_index = _field_int_with_fallback(handler, form, "chunk_index")
+    total_chunks = _field_int_with_fallback(handler, form, "total_chunks")
+    filename = (
+        _field_text_with_query_fallback(handler, form, "filename")
+        or "monthly_comments.xlsx"
+    )
+    chunk_field = _field(form, "chunk")
+    if chunk_field is None or not getattr(chunk_field, "file", None):
+        raise ValueError("Upload chunk file is required.")
+
+    chunk_bytes = chunk_field.file.read()
+    if not chunk_bytes:
+        raise ValueError("Upload chunk file is empty.")
+    if len(chunk_bytes) > CHUNK_UPLOAD_MAX_BYTES:
+        raise ValueError(
+            f"Each upload chunk must be {CHUNK_UPLOAD_MAX_BYTES // (1024 * 1024)} MB or smaller."
+        )
+
+    output_path = save_chunk(
+        upload_id,
+        chunk_index,
+        total_chunks,
+        filename,
+        chunk_bytes,
+        pivot_name=_field_text_with_query_fallback(handler, form, "pivot_name") or None,
+        program=_field_text_with_query_fallback(handler, form, "program") or None,
+        crm_count=_field_text_with_query_fallback(handler, form, "crm_count") or None,
+    )
+    return _json_bytes(
+        {
+            "ok": True,
+            "upload_id": upload_id,
+            "chunk_index": chunk_index,
+            "total_chunks": total_chunks,
+            "complete": output_path is not None,
+        }
+    )
 
 
 def _optional_text(form: cgi.FieldStorage, name: str) -> str | None:
@@ -284,8 +569,8 @@ def _app_from_form(form: cgi.FieldStorage) -> str:
 
 def _program_from_form(form: cgi.FieldStorage) -> str:
     program = _field_text(form, "program") or PROGRAM_A
-    if program not in {PROGRAM_A, PROGRAM_B}:
-        raise ValueError("Please select Program A or Program B.")
+    if program not in {PROGRAM_A, PROGRAM_B, PROGRAM_C}:
+        raise ValueError("Please select a report program.")
     return program
 
 
@@ -1347,12 +1632,30 @@ class handler(BaseHTTPRequestHandler):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header(
+            "Access-Control-Allow-Headers",
+            "Content-Type, X-Report-Pivot-Name, X-Report-Program, X-Report-Crm-Count, "
+            "X-Report-Monthly-Comments-Upload-Id, X-Report-Powerbi-Upload-Id, "
+            "X-Report-Separate-M-Inhouse, X-Report-Separate-Department, "
+            "X-Report-Separate-By-Days, X-Report-Output-File",
+        )
         self.end_headers()
 
     def do_POST(self) -> None:
+        response_warning = ""
         try:
             form = _parse_form(self)
+            report_action = _field_text_with_query_fallback(self, form, "report_action")
+            if report_action == REPORT_ACTION_UPLOAD_MONTHLY_CHUNK:
+                response_bytes = _handle_monthly_chunk_upload(self, form)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(response_bytes)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(response_bytes)
+                return
+
             app = _app_from_form(form)
             if app == APP_DATABASE_CHECK:
                 database_action = (_field_text(form, "database_action") or "run").casefold()
@@ -1374,81 +1677,116 @@ class handler(BaseHTTPRequestHandler):
             with tempfile.TemporaryDirectory() as tmp:
                 tmp_path = Path(tmp)
                 if app == APP_REPORT:
-                    program = _program_from_form(form)
-                    pivot_name = _field_text(form, "pivot_name")
-                    if program == PROGRAM_A and not pivot_name:
-                        raise ValueError("Pivot table name is required for Program A.")
-
-                    crm_count_raw = _field_text(form, "crm_count")
-                    try:
-                        crm_count = int(crm_count_raw)
-                    except ValueError as exc:
-                        raise ValueError("At least one CRM file is required.") from exc
-
-                    if crm_count < 1:
-                        raise ValueError("At least one CRM file is required.")
-
-                    powerbi_path = _save_upload(
-                        _field(form, "powerbi_report"),
-                        tmp_path,
-                        "PowerBI report",
+                    monthly_comments_upload_id = _resolve_monthly_comments_upload_id(
+                        self, form
                     )
+                    upload_meta = (
+                        read_upload_metadata(monthly_comments_upload_id)
+                        if monthly_comments_upload_id
+                        else {}
+                    )
+                    program = _resolve_report_program(
+                        self, form, monthly_comments_upload_id, upload_meta
+                    )
+                    pivot_name = _resolve_pivot_name(self, form, upload_meta)
+                    if program in {PROGRAM_A, PROGRAM_C} and not pivot_name:
+                        raise ValueError("Pivot table name is required for this report program.")
 
-                    crm_files: list[Path] = []
-                    platforms: list[str] = []
-                    for index in range(crm_count):
-                        crm_field = _field(form, f"crm_file_{index}")
-                        platform = _field_text(form, f"platform_{index}")
-                        has_upload = _has_upload(crm_field)
-                        if not has_upload and not platform:
-                            continue
-                        if not has_upload:
-                            raise ValueError(f"Please upload CRM file #{index + 1}.")
-                        if not platform:
-                            raise ValueError(
-                                f"Platform name for CRM file #{index + 1} is required."
-                            )
-                        crm_path = _save_upload(
-                            crm_field,
+                    powerbi_path: Path | None = None
+                    powerbi_upload_id = ""
+                    monthly_comments_path: Path | None = None
+                    if program == PROGRAM_C:
+                        monthly_comments_path = _resolve_monthly_comments_path(
+                            self,
+                            form,
                             tmp_path,
-                            f"CRM file #{index + 1}",
+                            monthly_comments_upload_id,
                         )
-                        crm_files.append(crm_path)
-                        platforms.append(platform)
+                    else:
+                        powerbi_upload_id = _resolve_powerbi_upload_id(self, form)
+                        powerbi_path = _resolve_powerbi_path(
+                            self,
+                            form,
+                            tmp_path,
+                            powerbi_upload_id,
+                        )
 
-                    if not crm_files:
-                        raise ValueError("Please upload at least one CRM file.")
-
-                    default_output = (
-                        PROGRAM_B_OUTPUT_FILENAME
-                        if program == PROGRAM_B
-                        else PROGRAM_A_OUTPUT_FILENAME
+                    crm_files, platforms, crm_upload_ids = _collect_crm_uploads(
+                        form, tmp_path
                     )
+
+                    default_output = {
+                        PROGRAM_B: PROGRAM_B_OUTPUT_FILENAME,
+                        PROGRAM_C: PROGRAM_C_OUTPUT_FILENAME,
+                    }.get(program, PROGRAM_A_OUTPUT_FILENAME)
                     response_filename = _output_filename(
-                        _field_text(form, "output_file"),
+                        _field_text_with_query_fallback(self, form, "output_file"),
                         default_output,
                     )
                     output_path = tmp_path / response_filename
                     common_args = {
-                        "powerbi_report": powerbi_path,
                         "crm_files": crm_files,
                         "platforms": platforms,
                         "output_file": output_path,
                         "powerbi_sheet": _optional_text(form, "powerbi_sheet"),
                         "crm_sheet": _optional_text(form, "crm_sheet"),
                     }
+                    if powerbi_path is not None:
+                        common_args["powerbi_report"] = powerbi_path
+                    if monthly_comments_path is not None:
+                        common_args["monthly_comments_report"] = monthly_comments_path
+                    separate_department = _resolve_toggle(
+                        self, form, "separate_department"
+                    )
+                    separate_by_days = _resolve_toggle(
+                        self, form, "separate_by_days"
+                    )
+
+                    telemarketing_kyc_lookup = None
+                    try:
+                        telemarketing_kyc_lookup = kyc_lookup.fetch_kyc_comment_lookup(
+                            now=datetime.now(timezone.utc)
+                        )
+                    except kyc_lookup.KycMonthSheetNotFound:
+                        response_warning = kyc_lookup.KYC_MONTH_SHEET_NOT_FOUND_WARNING
+                        telemarketing_kyc_lookup = None
+                    except Exception:
+                        telemarketing_kyc_lookup = None
+
                     if program == PROGRAM_B:
-                        program_b_country_report.build_output(**common_args)
-                        response_bytes = output_path.read_bytes()
-                        response_content_type = XLSX_CONTENT_TYPE
+                        generated_outputs = program_b_country_report.build_output(
+                            **common_args,
+                            separate_department=separate_department,
+                            separate_by_days=separate_by_days,
+                            telemarketing_kyc_lookup=telemarketing_kyc_lookup,
+                        )
+                        if not generated_outputs or len(generated_outputs) == 1:
+                            only_output = (
+                                generated_outputs[0]
+                                if generated_outputs
+                                else output_path
+                            )
+                            response_filename = only_output.name
+                            response_bytes = only_output.read_bytes()
+                            response_content_type = XLSX_CONTENT_TYPE
+                        else:
+                            response_filename = f"{output_path.stem}_reports.zip"
+                            response_bytes = _zip_files(generated_outputs)
+                            response_content_type = "application/zip"
                     else:
-                        separate_m_inhousemedia = _is_truthy(
-                            _field_text(form, "separate_m_inhouse")
+                        separate_m_inhousemedia = _resolve_toggle(
+                            self,
+                            form,
+                            "separate_m_inhouse",
+                            default=True,
                         )
                         generated_outputs = program_a_report.build_output_files(
                             **common_args,
                             pivot_name=pivot_name,
                             separate_m_inhousemedia=separate_m_inhousemedia,
+                            separate_department=separate_department,
+                            separate_by_days=separate_by_days,
+                            telemarketing_kyc_lookup=telemarketing_kyc_lookup,
                         )
                         if len(generated_outputs) == 1:
                             only_output = generated_outputs[0]
@@ -1459,6 +1797,12 @@ class handler(BaseHTTPRequestHandler):
                             response_filename = f"{output_path.stem}_reports.zip"
                             response_bytes = _zip_files(generated_outputs)
                             response_content_type = "application/zip"
+                    if monthly_comments_upload_id:
+                        cleanup_upload(monthly_comments_upload_id)
+                    if powerbi_upload_id:
+                        cleanup_upload(powerbi_upload_id)
+                    for crm_upload_id in crm_upload_ids:
+                        cleanup_upload(crm_upload_id)
                 elif app == APP_LEAD_SPLITTER:
                     lead_input = _save_upload(
                         _field(form, "lead_input"),
@@ -1542,5 +1886,11 @@ class handler(BaseHTTPRequestHandler):
         )
         self.send_header("Content-Length", str(len(response_bytes)))
         self.send_header("Access-Control-Allow-Origin", "*")
+        if response_warning:
+            self.send_header("X-Report-Warning", response_warning)
+            self.send_header(
+                "Access-Control-Expose-Headers",
+                "X-Report-Warning, Content-Disposition",
+            )
         self.end_headers()
         self.wfile.write(response_bytes)
