@@ -1469,12 +1469,17 @@ class handler(BaseHTTPRequestHandler):
                     if lead_kind not in {"lead", "aff", "countries"}:
                         raise ValueError("Invalid Lead Splitter output type requested.")
 
+                    lead_variant = (_field_text(form, "lead_variant") or "tr").lower()
+                    if lead_variant not in {"tr", "ar"}:
+                        raise ValueError("Invalid Lead Splitter variant requested.")
+
                     generated_outputs = lead_splitter.build_outputs(
                         input_path=lead_input,
                         output_dir=tmp_path,
                         generate_lead=(lead_kind == "lead"),
                         generate_aff=(lead_kind == "aff"),
                         generate_countries=(lead_kind == "countries"),
+                        variant=lead_variant,
                     )
                     selected_output = generated_outputs.get(lead_kind)
                     if selected_output is None:

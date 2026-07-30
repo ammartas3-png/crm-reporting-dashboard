@@ -172,5 +172,135 @@ class LeadSplitterCountriesTests(unittest.TestCase):
             )
 
 
+class LeadSplitterArVariantTests(unittest.TestCase):
+    def test_ar_desk_and_country_helpers(self) -> None:
+        self.assertEqual(lead_splitter.get_desk_ar("AR1-PT"), "AR1")
+        self.assertEqual(lead_splitter.get_country_ar("AR1-PT"), "PT")
+        self.assertEqual(lead_splitter.get_desk_ar("AR"), "AR")
+        self.assertEqual(lead_splitter.get_country_ar("AR"), "")
+
+    def test_ar_lane_assignment(self) -> None:
+        lane = lead_splitter.AR_VARIANT.lane_of
+        self.assertEqual(lane("AR1"), "left")
+        self.assertEqual(lane("AR2"), "middle")
+        self.assertEqual(lane("AR"), "middle")
+        self.assertEqual(lane("TR"), "right")
+
+    def _ar_headers(self) -> list[str]:
+        return [
+            "Ignore0",
+            "Desk",
+            "Agent",
+            "Ignore3",
+            "CID",
+            "Status",
+            "Campaign",
+            "Ignore7",
+            "Country",
+            "Ignore9",
+            "Ignore10",
+            "Ignore11",
+            "Ignore12",
+            "Assigned",
+            "FTD",
+        ]
+
+    def test_ar_countries_output_uses_desk_and_suffix_country_and_lanes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_path = root / "lead_input.xlsx"
+            output_dir = root / "out"
+
+            rows = [
+                # Country column (index 8) is intentionally wrong to prove AR ignores it.
+                ["", "AR1-PT", "Agent A TR", "", "CID-1", "Reached", "Camp A", "", "WRONG", "", "", "", "", "1", "0"],
+                ["", "AR2-ES", "Agent B TR", "", "CID-2", "Reached", "Camp B", "", "WRONG", "", "", "", "", "1", "1"],
+                ["", "TR-DE", "Agent C TR", "", "CID-3", "Reached", "Camp C", "", "WRONG", "", "", "", "", "1", "0"],
+            ]
+            _write_input_with_header_row_3(input_path, self._ar_headers(), rows)
+
+            outputs = lead_splitter.build_outputs(
+                input_path=input_path,
+                output_dir=output_dir,
+                generate_lead=False,
+                generate_aff=False,
+                generate_countries=True,
+                variant="ar",
+            )
+            workbook = load_workbook(outputs["countries"], data_only=False)
+            sheet = workbook["Lead splitter by countries"]
+
+            def _cell(row, col):
+                return str(sheet.cell(row, col).value or "").strip()
+
+            # Left lane (cols 1-7) -> AR1 desk, country PT (from the suffix, not "WRONG").
+            self.assertEqual(_cell(2, 1), "AR1")
+            self.assertEqual(_cell(2, 2), "PT")
+            # Middle lane (cols 9-15) -> AR2 desk.
+            self.assertEqual(_cell(2, 9), "AR2")
+            self.assertEqual(_cell(2, 10), "ES")
+            # Right lane (cols 17-23) -> TR desk.
+            self.assertEqual(_cell(2, 17), "TR")
+            self.assertEqual(_cell(2, 18), "DE")
+
+    def test_ar_agent_name_strips_trailing_tr(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_path = root / "lead_input.xlsx"
+            output_dir = root / "out"
+
+            rows = [
+                ["", "AR1-PT", "Mohammed TR", "", "CID-1", "Reached", "Camp A", "", "PT", "", "", "", "", "1", "0"],
+            ]
+            _write_input_with_header_row_3(input_path, self._ar_headers(), rows)
+
+            outputs = lead_splitter.build_outputs(
+                input_path=input_path,
+                output_dir=output_dir,
+                generate_lead=True,
+                generate_aff=False,
+                generate_countries=False,
+                variant="ar",
+            )
+            workbook = load_workbook(outputs["lead"], data_only=False)
+            pivot = workbook["Pivot"]
+            agents = {
+                str(pivot.cell(r, 3).value or "").strip()
+                for r in range(2, pivot.max_row + 1)
+            }
+            self.assertIn("Mohammed", agents)
+            self.assertNotIn("Mohammed TR", agents)
+
+    def test_ar_aff_tables_are_by_desk(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_path = root / "lead_input.xlsx"
+            output_dir = root / "out"
+
+            rows = [
+                ["", "AR1-PT", "Agent A TR", "", "CID-1", "Reached", "Camp A", "", "PT", "", "", "", "", "1", "1"],
+                ["", "AR2-ES", "Agent B TR", "", "CID-2", "Reached", "Camp B", "", "ES", "", "", "", "", "1", "0"],
+                ["", "TR-DE", "Agent C TR", "", "CID-3", "Reached", "Camp C", "", "DE", "", "", "", "", "1", "0"],
+            ]
+            _write_input_with_header_row_3(input_path, self._ar_headers(), rows)
+
+            outputs = lead_splitter.build_outputs(
+                input_path=input_path,
+                output_dir=output_dir,
+                generate_lead=False,
+                generate_aff=True,
+                generate_countries=False,
+                variant="ar",
+            )
+            workbook = load_workbook(outputs["aff"], data_only=False)
+            sheet = workbook["AFF by Status"]
+
+            # Header first column is "Desk" and the three tables are labeled by desk.
+            self.assertEqual(str(sheet.cell(1, 1).value or "").strip(), "Desk")
+            self.assertEqual(str(sheet.cell(2, 1).value or "").strip(), "AR1")
+            self.assertEqual(str(sheet.cell(2, 9).value or "").strip(), "AR2")
+            self.assertEqual(str(sheet.cell(2, 17).value or "").strip(), "TR")
+
+
 if __name__ == "__main__":
     unittest.main()

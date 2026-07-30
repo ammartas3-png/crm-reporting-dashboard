@@ -228,6 +228,17 @@
         <form id="lead-form" class="card">
           <input type="hidden" name="app" value="lead_splitter" />
           <fieldset>
+            <legend>Lead splitter type</legend>
+            <label>
+              Which lead splitter should process the file?
+              <select name="lead_variant" id="lead-variant">
+                <option value="tr" selected>TR leadsplitter</option>
+                <option value="ar">AR leadsplitter</option>
+              </select>
+            </label>
+          </fieldset>
+
+          <fieldset>
             <legend>Lead splitter input</legend>
             <label>
               Browse source .xlsx file
