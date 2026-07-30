@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import os
 import re
+from dataclasses import dataclass
 from functools import lru_cache
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Callable
 
 import pandas as pd
 from openpyxl import Workbook
@@ -188,15 +190,96 @@ def _share(part, whole) -> float:
     return (part / whole) if whole > 0 else 0.0
 
 
-def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col) -> None:
+# --- AR leadsplitter variant helpers -------------------------------------------------
+def get_desk_ar(desk) -> str:
+    """AR desk = the part before the first '-' (e.g. 'AR1-PT' -> 'AR1')."""
+    text = str(desk if desk is not None else "").strip()
+    if "-" in text:
+        return text.split("-", 1)[0].strip()
+    return text
+
+
+def get_country_ar(desk) -> str:
+    """AR country = the part after the first '-' (e.g. 'AR1-PT' -> 'PT')."""
+    text = str(desk if desk is not None else "").strip()
+    if "-" in text:
+        return text.split("-", 1)[1].strip()
+    return ""
+
+
+def _ar_pivot_lane_for_desk(desk_name: str) -> str:
+    desk_upper = str(desk_name or "").strip().upper()
+    if desk_upper == "AR1":
+        return "left"
+    if desk_upper == "TR":
+        return "right"
+    # AR2 and the occasional bare AR both go in the middle.
+    return "middle"
+
+
+def _tr_country_series(df, desk_col, country_col):
+    return df[country_col]
+
+
+def _ar_country_series(df, desk_col, country_col):
+    return df[desk_col].apply(get_country_ar)
+
+
+@dataclass(frozen=True)
+class LeadSplitterVariant:
+    """Per-variant behavior for the lead splitter (TR is the original)."""
+
+    key: str
+    agent_suffix_pattern: str
+    apply_country_overrides: bool
+    aff_mode: str  # "country" (CH/SG/GCC) or "desk" (AR1/AR2/TR)
+    desk_of: Callable[[Any], str]
+    office_of: Callable[[Any], str]
+    country_series: Callable  # (df, desk_col, country_col) -> Series
+    lane_of: Callable[[str], str]
+
+
+TR_VARIANT = LeadSplitterVariant(
+    key="tr",
+    agent_suffix_pattern=r"(CY|AE|IN)$",
+    apply_country_overrides=True,
+    aff_mode="country",
+    desk_of=get_desk2,
+    office_of=get_office,
+    country_series=_tr_country_series,
+    lane_of=_pivot_lane_for_desk,
+)
+
+AR_VARIANT = LeadSplitterVariant(
+    key="ar",
+    agent_suffix_pattern=r"TR$",
+    apply_country_overrides=False,
+    aff_mode="desk",
+    desk_of=get_desk_ar,
+    office_of=get_desk_ar,
+    country_series=_ar_country_series,
+    lane_of=_ar_pivot_lane_for_desk,
+)
+
+LEAD_SPLITTER_VARIANTS = {"tr": TR_VARIANT, "ar": AR_VARIANT}
+
+
+def resolve_variant(variant: "str | LeadSplitterVariant | None") -> LeadSplitterVariant:
+    if isinstance(variant, LeadSplitterVariant):
+        return variant
+    return LEAD_SPLITTER_VARIANTS.get(str(variant or "tr").lower(), TR_VARIANT)
+
+
+def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col, variant=TR_VARIANT) -> None:
     ws = wb.create_sheet("Pivot")
 
     df = df.copy()
-    df["_DESK2"] = df[b_col].apply(get_desk2)
+    df["_DESK2"] = df[b_col].apply(variant.desk_of)
+    df["_COUNTRY"] = variant.country_series(df, b_col, i_col)
     df["_N1"] = _flag_is_one(df[n_col])
     df["_O1"] = _flag_is_one(df[o_col])
 
-    agg = df.groupby(["_DESK2", i_col, c_col], sort=True).agg(
+    agg = df.groupby(["_DESK2", "_COUNTRY", c_col], sort=True).agg(
         Assigned=("_N1", "sum"), FTD=("_O1", "sum")
     ).reset_index()
     header_fill = PatternFill("solid", start_color="1F4E79", end_color="1F4E79")
@@ -266,7 +349,7 @@ def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col) -> None:
     desks = sorted(agg["_DESK2"].dropna().unique().tolist(), key=lambda x: str(x))
     desks_by_lane: dict[str, list[str]] = {"left": [], "middle": [], "right": []}
     for desk in desks:
-        desks_by_lane[_pivot_lane_for_desk(str(desk))].append(str(desk))
+        desks_by_lane[variant.lane_of(str(desk))].append(str(desk))
 
     for lane_name, lane_desks in desks_by_lane.items():
         start_col = section_specs[lane_name]["start_col"]
@@ -274,12 +357,12 @@ def build_pivot(wb, df, n_col, o_col, b_col, c_col, i_col) -> None:
 
         for desk_index, desk_name in enumerate(lane_desks):
             desk_df = agg[agg["_DESK2"] == desk_name].copy()
-            country_totals = desk_df.groupby(i_col)["Assigned"].sum().sort_values(ascending=False)
+            country_totals = desk_df.groupby("_COUNTRY")["Assigned"].sum().sort_values(ascending=False)
             country_order = country_totals.index.tolist()
             first_desk_row = True
 
             for country in country_order:
-                country_df = desk_df[desk_df[i_col] == country].copy()
+                country_df = desk_df[desk_df["_COUNTRY"] == country].copy()
                 country_df = country_df.sort_values(
                     by=["Assigned", "FTD", c_col],
                     ascending=[False, False, True],
@@ -371,16 +454,18 @@ def build_lead_splitter_by_countries(
     status_col,
     n_col,
     o_col,
+    variant=TR_VARIANT,
 ) -> None:
     data = df.copy()
-    data["_DESK2"] = data[desk_col].apply(get_desk2)
+    data["_DESK2"] = data[desk_col].apply(variant.desk_of)
+    data["_COUNTRY"] = variant.country_series(data, desk_col, country_col)
     data["_N1"] = _flag_is_one(data[n_col])
     data["_O1"] = _flag_is_one(data[o_col])
     # Keep parity with AFF behavior for status assignment.
     data.loc[data["_O1"] == 1, status_col] = "Telemarketing"
 
     agg = (
-        data.groupby(["_DESK2", country_col, campaign_col, status_col], sort=True)
+        data.groupby(["_DESK2", "_COUNTRY", campaign_col, status_col], sort=True)
         .agg(Assigned=("_N1", "sum"), FTD=("_O1", "sum"))
         .reset_index()
     )
@@ -456,7 +541,7 @@ def build_lead_splitter_by_countries(
     desks = sorted(agg["_DESK2"].dropna().unique().tolist(), key=lambda x: str(x))
     desks_by_lane: dict[str, list[str]] = {"left": [], "middle": [], "right": []}
     for desk in desks:
-        desks_by_lane[_pivot_lane_for_desk(str(desk))].append(str(desk))
+        desks_by_lane[variant.lane_of(str(desk))].append(str(desk))
 
     for lane_name, lane_desks in desks_by_lane.items():
         start_col = section_specs[lane_name]["start_col"]
@@ -464,12 +549,12 @@ def build_lead_splitter_by_countries(
 
         for desk_index, desk_name in enumerate(lane_desks):
             desk_df = agg[agg["_DESK2"] == desk_name].copy()
-            country_totals = desk_df.groupby(country_col)["Assigned"].sum().sort_values(ascending=False)
+            country_totals = desk_df.groupby("_COUNTRY")["Assigned"].sum().sort_values(ascending=False)
             country_order = country_totals.index.tolist()
             first_desk_row = True
 
             for country in country_order:
-                country_df = desk_df[desk_df[country_col] == country].copy()
+                country_df = desk_df[desk_df["_COUNTRY"] == country].copy()
                 campaign_totals = (
                     country_df.groupby(campaign_col)["Assigned"].sum().sort_values(ascending=False)
                 )
@@ -627,11 +712,13 @@ def _aff_write_row(ws, row_i, col_offset, vals, font, fill, skip_fill=0) -> None
     ws.row_dimensions[row_i].height = 15
 
 
-def _write_standard_table(ws, data_df, col_offset, country_label, campaign_col, status_col) -> None:
+def _write_standard_table(
+    ws, data_df, col_offset, country_label, campaign_col, status_col, label_header="Country"
+) -> None:
     _aff_write_headers(
         ws,
         col_offset,
-        ["Country", "Office", "Campaign", "Status", "LEADS", "FTD", "CR%"],
+        [label_header, "Office", "Campaign", "Status", "LEADS", "FTD", "CR%"],
     )
     row_i = 2
     first_country = True
@@ -821,76 +908,103 @@ def _write_gcc_table(ws, data_df, col_offset, campaign_col, country_col, status_
     )
 
 
-def build_aff_by_status(df, output_path, campaign_col, country_col, desk_col, status_col, n_col, o_col) -> None:
+def build_aff_by_status(
+    df, output_path, campaign_col, country_col, desk_col, status_col, n_col, o_col, variant=TR_VARIANT
+) -> None:
     data = df.copy()
-    data["_OFFICE"] = data[desk_col].apply(get_office)
-    data["_DESK2"] = data[desk_col].apply(get_desk2)
+    data["_OFFICE"] = data[desk_col].apply(variant.office_of)
+    data["_DESK2"] = data[desk_col].apply(variant.desk_of)
+    data["_COUNTRY"] = variant.country_series(data, desk_col, country_col)
     data["_N1"] = _flag_is_one(data[n_col])
     data["_O1"] = _flag_is_one(data[o_col])
     # AFF rule: any row with O column = 1 is treated as Telemarketing.
     data.loc[data["_O1"] == 1, status_col] = "Telemarketing"
 
-    ch_df = data[data[country_col].apply(lambda x: str(x).strip() == "Switzerland")].copy()
-    sg_df = data[data[country_col].apply(lambda x: str(x).strip() == "Singapore")].copy()
-    gcc_df = data[
-        data[country_col].apply(lambda x: str(x).strip() in GCC_COUNTRIES) & (data["_DESK2"] == "EN")
-    ].copy()
-
     wb = Workbook()
     ws = wb.active
     ws.title = "AFF by Status"
 
-    _write_standard_table(
-        ws,
-        ch_df,
-        col_offset=0,
-        country_label="CH",
-        campaign_col=campaign_col,
-        status_col=status_col,
-    )
-    _write_standard_table(
-        ws,
-        sg_df,
-        col_offset=8,
-        country_label="SG",
-        campaign_col=campaign_col,
-        status_col=status_col,
-    )
-    _write_gcc_table(
-        ws,
-        gcc_df,
-        col_offset=16,
-        campaign_col=campaign_col,
-        country_col=country_col,
-        status_col=status_col,
-    )
+    if variant.aff_mode == "desk":
+        # AR: three tables by desk lane (AR1 / AR2 / TR) instead of CH / SG / GCC.
+        data["_LANE"] = data["_DESK2"].apply(variant.lane_of)
+        lane_defaults = {"left": "AR1", "middle": "AR2", "right": "TR"}
+        for lane_name, col_offset in (("left", 0), ("middle", 8), ("right", 16)):
+            lane_df = data[data["_LANE"] == lane_name].copy()
+            desks_present = sorted(
+                {str(v).strip() for v in lane_df["_DESK2"].dropna() if str(v).strip()}
+            )
+            label = " / ".join(desks_present) if desks_present else lane_defaults[lane_name]
+            _write_standard_table(
+                ws,
+                lane_df,
+                col_offset=col_offset,
+                country_label=label,
+                campaign_col=campaign_col,
+                status_col=status_col,
+                label_header="Desk",
+            )
 
-    col_widths = [
-        10,
-        9,
-        22,
-        18,
-        8,
-        7,
-        7,
-        0.8,
-        10,
-        9,
-        22,
-        18,
-        8,
-        7,
-        7,
-        0.8,
-        10,
-        9,
-        22,
-        20,
-        18,
-        8,
-        7,
-        7,
-    ]
+        col_widths = ([10, 9, 22, 18, 8, 7, 7, 0.8] * 2) + [10, 9, 22, 18, 8, 7, 7]
+    else:
+        ch_df = data[data["_COUNTRY"].apply(lambda x: str(x).strip() == "Switzerland")].copy()
+        sg_df = data[data["_COUNTRY"].apply(lambda x: str(x).strip() == "Singapore")].copy()
+        gcc_df = data[
+            data["_COUNTRY"].apply(lambda x: str(x).strip() in GCC_COUNTRIES)
+            & (data["_DESK2"] == "EN")
+        ].copy()
+
+        _write_standard_table(
+            ws,
+            ch_df,
+            col_offset=0,
+            country_label="CH",
+            campaign_col=campaign_col,
+            status_col=status_col,
+        )
+        _write_standard_table(
+            ws,
+            sg_df,
+            col_offset=8,
+            country_label="SG",
+            campaign_col=campaign_col,
+            status_col=status_col,
+        )
+        _write_gcc_table(
+            ws,
+            gcc_df,
+            col_offset=16,
+            campaign_col=campaign_col,
+            country_col="_COUNTRY",
+            status_col=status_col,
+        )
+
+        col_widths = [
+            10,
+            9,
+            22,
+            18,
+            8,
+            7,
+            7,
+            0.8,
+            10,
+            9,
+            22,
+            18,
+            8,
+            7,
+            7,
+            0.8,
+            10,
+            9,
+            22,
+            20,
+            18,
+            8,
+            7,
+            7,
+        ]
+
     for i, width in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = width
 
@@ -914,7 +1028,9 @@ def build_outputs(
     generate_lead: bool = True,
     generate_aff: bool = True,
     generate_countries: bool = False,
+    variant: "str | LeadSplitterVariant | None" = "tr",
 ) -> dict[str, Path]:
+    variant_obj = resolve_variant(variant)
     today = datetime.now()
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -978,16 +1094,17 @@ def build_outputs(
         .astype(str)
         .str.replace(r"\s*\([^)]*\)\s*$", "", regex=True)
         .str.strip()
-        .str.replace(r"(CY|AE|IN)$", "", regex=True)
+        .str.replace(variant_obj.agent_suffix_pattern, "", regex=True)
         .str.strip()
         .replace(name_fixes)
     )
     df[c_col] = cleaned_agents
 
-    country_text = df[i_col].fillna("").astype(str).str.strip()
-    agent_text = df[c_col].fillna("").astype(str).str.strip()
-    df.loc[country_text.eq("Bangladesh"), b_col] = "TR1-IN"
-    df.loc[country_text.eq("Malaysia") & ~agent_text.isin(eng_agents), b_col] = "TR1-MY"
+    if variant_obj.apply_country_overrides:
+        country_text = df[i_col].fillna("").astype(str).str.strip()
+        agent_text = df[c_col].fillna("").astype(str).str.strip()
+        df.loc[country_text.eq("Bangladesh"), b_col] = "TR1-IN"
+        df.loc[country_text.eq("Malaysia") & ~agent_text.isin(eng_agents), b_col] = "TR1-MY"
 
     outputs: dict[str, Path] = {}
 
@@ -1025,7 +1142,7 @@ def build_outputs(
             ws_data.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 4, 40)
 
         ws_data.freeze_panes = "A2"
-        build_pivot(wb_new, df, n_col, o_col, b_col, c_col, i_col)
+        build_pivot(wb_new, df, n_col, o_col, b_col, c_col, i_col, variant_obj)
         wb_new.move_sheet(wb_new["Pivot"], offset=-1)
         wb_new.save(lead_output_path)
         outputs["lead"] = lead_output_path
@@ -1033,9 +1150,17 @@ def build_outputs(
     if generate_aff:
         if campaign_col is None:
             raise ValueError("Campaign column was not found, AFF output cannot be created.")
-        aff_name = aff_output_name or f"AFF BY status- SG - CH - GCC - {today.strftime('%d-%m')}.xlsx"
+        default_aff_suffix = (
+            "AR1 - AR2 - TR" if variant_obj.aff_mode == "desk" else "SG - CH - GCC"
+        )
+        aff_name = (
+            aff_output_name
+            or f"AFF BY status- {default_aff_suffix} - {today.strftime('%d-%m')}.xlsx"
+        )
         aff_output_path = output_dir / aff_name
-        build_aff_by_status(df, aff_output_path, campaign_col, i_col, b_col, f_col, n_col, o_col)
+        build_aff_by_status(
+            df, aff_output_path, campaign_col, i_col, b_col, f_col, n_col, o_col, variant_obj
+        )
         outputs["aff"] = aff_output_path
 
     if generate_countries:
@@ -1057,6 +1182,7 @@ def build_outputs(
             f_col,
             n_col,
             o_col,
+            variant_obj,
         )
         outputs["countries"] = countries_output_path
 
