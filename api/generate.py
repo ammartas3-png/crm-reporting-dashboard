@@ -470,6 +470,36 @@ def _resolve_powerbi_path(
     )
 
 
+def _resolve_cy_ftd_upload_id(
+    handler: BaseHTTPRequestHandler,
+    form: cgi.FieldStorage,
+) -> str:
+    return _field_text_with_query_fallback(handler, form, "cy_ftd_upload_id")
+
+
+def _resolve_cy_ftd_path(
+    handler: BaseHTTPRequestHandler,
+    form: cgi.FieldStorage,
+    directory: Path,
+    upload_id: str,
+) -> Path | None:
+    """CY FTDs is an optional extra file; returns None when not provided."""
+    if upload_id:
+        try:
+            return resolve_uploaded_file(upload_id)
+        except ValueError as exc:
+            raise ValueError(
+                "CY FTDs upload was not found on the server. "
+                "Please refresh the page, re-select the CY FTDs file, and try again."
+            ) from exc
+
+    cy_ftd_field = _field(form, "cy_ftd_report")
+    if _has_upload(cy_ftd_field):
+        return _save_upload(cy_ftd_field, directory, "CY FTDs report")
+
+    return None
+
+
 def _resolve_toggle(
     handler: BaseHTTPRequestHandler,
     form: cgi.FieldStorage,
@@ -1636,8 +1666,8 @@ class handler(BaseHTTPRequestHandler):
             "Access-Control-Allow-Headers",
             "Content-Type, X-Report-Pivot-Name, X-Report-Program, X-Report-Crm-Count, "
             "X-Report-Monthly-Comments-Upload-Id, X-Report-Powerbi-Upload-Id, "
-            "X-Report-Separate-M-Inhouse, X-Report-Separate-Department, "
-            "X-Report-Separate-By-Days, X-Report-Output-File",
+            "X-Report-Cy-Ftd-Upload-Id, X-Report-Separate-M-Inhouse, "
+            "X-Report-Separate-Department, X-Report-Separate-By-Days, X-Report-Output-File",
         )
         self.end_headers()
 
@@ -1715,6 +1745,14 @@ class handler(BaseHTTPRequestHandler):
                         form, tmp_path
                     )
 
+                    cy_ftd_upload_id = _resolve_cy_ftd_upload_id(self, form)
+                    cy_ftd_path = _resolve_cy_ftd_path(
+                        self,
+                        form,
+                        tmp_path,
+                        cy_ftd_upload_id,
+                    )
+
                     default_output = {
                         PROGRAM_B: PROGRAM_B_OUTPUT_FILENAME,
                         PROGRAM_C: PROGRAM_C_OUTPUT_FILENAME,
@@ -1735,6 +1773,8 @@ class handler(BaseHTTPRequestHandler):
                         common_args["powerbi_report"] = powerbi_path
                     if monthly_comments_path is not None:
                         common_args["monthly_comments_report"] = monthly_comments_path
+                    if cy_ftd_path is not None:
+                        common_args["cy_ftd_report"] = cy_ftd_path
                     separate_department = _resolve_toggle(
                         self, form, "separate_department"
                     )
@@ -1801,6 +1841,8 @@ class handler(BaseHTTPRequestHandler):
                         cleanup_upload(monthly_comments_upload_id)
                     if powerbi_upload_id:
                         cleanup_upload(powerbi_upload_id)
+                    if cy_ftd_upload_id:
+                        cleanup_upload(cy_ftd_upload_id)
                     for crm_upload_id in crm_upload_ids:
                         cleanup_upload(crm_upload_id)
                 elif app == APP_LEAD_SPLITTER:
