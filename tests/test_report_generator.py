@@ -15,6 +15,7 @@ from report_generator import (
     _extract_day_code,
     build_output_files,
     build_output,
+    extract_comments,
     extract_monthly_comments,
     read_powerbi_lookup,
 )
@@ -356,6 +357,41 @@ class ReportGeneratorTests(unittest.TestCase):
             ]
             self.assertIn("Campaign A", campaigns)
             self.assertIn("M-Inhousemedia Alpha", campaigns)
+
+    def test_extract_comments_keeps_multiline_body(self) -> None:
+        raw = (
+            "2026-09-10 6:56 | Alain Mo | no exp\n"
+            "has id\n"
+            "hospitality\n"
+            "31\n"
+            "gambia\n"
+            "2000 AED;\n"
+            "2026-09-10 6:43 | Alain Mo | In progress;"
+        )
+        self.assertEqual(
+            extract_comments(raw),
+            [
+                "In progress",
+                "no exp has id hospitality 31 gambia 2000 AED",
+            ],
+        )
+
+    def test_extract_comments_preserves_semicolon_inside_body(self) -> None:
+        raw = (
+            "2026-09-10 6:56 | Alain Mo | deposited 2000; will call back tomorrow;\n"
+            "2026-09-10 6:43 | Alain Mo | second note;"
+        )
+        self.assertEqual(
+            extract_comments(raw),
+            [
+                "second note",
+                "deposited 2000; will call back tomorrow",
+            ],
+        )
+
+    def test_extract_comments_preserves_pipe_inside_body(self) -> None:
+        raw = "2026-09-10 6:56 | Alain Mo | call at 3|4 pm;"
+        self.assertEqual(extract_comments(raw), ["call at 3|4 pm"])
 
     def test_extract_monthly_comments_strips_timestamp_and_semicolon(self) -> None:
         raw = (

@@ -145,6 +145,18 @@ STATUS_LIST: list[str] = sorted(
 )
 
 COMMENT_RE = re.compile(r"\|\s*([^|;]*?)\s*;")
+# Each PowerBI/CRM comment begins with a leading timestamp such as
+# "2026-09-10 6:56 |". We anchor on that timestamp to split comments so a
+# comment body may safely contain ";", "|" or newlines without being cut short.
+COMMENT_TIMESTAMP_CORE = r"\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}(?::\d{2})?\s*(?:[AP]M)?\s*\|"
+COMMENT_START_RE = re.compile(r"(?m)^[ \t]*" + COMMENT_TIMESTAMP_CORE)
+# Removes the "timestamp | [agent |]" prefix from a single comment block. The
+# optional agent group only matches when a second "|" appears on the first line
+# (i.e. before any newline), which distinguishes "timestamp | agent | body"
+# from the monthly "timestamp | body" format.
+COMMENT_PREFIX_RE = re.compile(
+    r"^[ \t]*" + COMMENT_TIMESTAMP_CORE + r"(?:[^|\n]*\|)?\s*"
+)
 NA_LIKE_PATTERN = re.compile(r"^(na(\s+vm)?|vm|dvm)$", re.IGNORECASE)
 STATUS_COMMENT_RE = re.compile(
     r"^("
@@ -189,13 +201,36 @@ def clean_comment(value: str) -> str:
     return " ".join(value.split())
 
 
+def _split_comment_blocks(text: str) -> list[str]:
+    starts = [match.start() for match in COMMENT_START_RE.finditer(text)]
+    if not starts:
+        return []
+    blocks: list[str] = []
+    for index, start in enumerate(starts):
+        end = starts[index + 1] if index + 1 < len(starts) else len(text)
+        blocks.append(text[start:end])
+    return blocks
+
+
+def _comment_body(block: str) -> str:
+    body = COMMENT_PREFIX_RE.sub("", block, count=1).strip()
+    if body.endswith(";"):
+        body = body[:-1].strip()
+    return body
+
+
 def extract_comments(last_10_comments: Any) -> list[str]:
     if last_10_comments is None:
         return []
-    comments = [
-        clean_comment(match.group(1))
-        for match in COMMENT_RE.finditer(str(last_10_comments))
-    ]
+    text = str(last_10_comments)
+    blocks = _split_comment_blocks(text)
+    if blocks:
+        comments = [clean_comment(_comment_body(block)) for block in blocks]
+    else:
+        comments = [
+            clean_comment(match.group(1))
+            for match in COMMENT_RE.finditer(text)
+        ]
     comments = [comment for comment in comments if comment]
     comments.reverse()
     return comments
